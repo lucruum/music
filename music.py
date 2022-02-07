@@ -1,8 +1,13 @@
+import colorama
 import functools
 import itertools
+import mutagen.mp3
 import os
+import pathlib
+import sys
 import yandex_music
 
+colorama.init(autoreset=True)
 yandex_music.Client.notice_displayed = True
 
 class Wrapper:
@@ -134,4 +139,65 @@ class Client(Wrapper):
         result = map(Playlist, result)
         return list(result)
 
+def sync(client, folder, tracks):
+    def message(color, status, track):
+        name = track.name
+        artists = ', '.join(it.name for it in track.artists)
+        print(color + f'[{status}]', f'{name} - {artists}')
+
+    def compute_local_tracks():
+        return list(folder.glob('*.mp3'))
+
+    def compute_mounts(local_tracks):
+        remote_tracks = [''] + [it.stem.split('_')[-1] for it in local_tracks]
+        remote_tracks = client.handle.tracks(remote_tracks)
+        remote_tracks = map(Track, remote_tracks)
+        return dict(zip(local_tracks, remote_tracks))
+
+    def compute_redundant_tracks(local_tracks, mounts):
+        return [it for it in local_tracks if mounts[it] not in tracks]
+
+    def compute_non_fetched_tracks(local_tracks, mounts):
+        return [it for it in tracks if it not in mounts.values()]
+
+    def compute_order(local_tracks, mounts):
+        return {path: tracks.index(mount) for path, mount in mounts.items()}
+
+    def download(track):
+        path = folder / f'{track.id}.mp3'
+        track.handle.download(path)
+        tags = mutagen.mp3.EasyMP3(path)
+        tags['title'] = track.name
+        tags['artist'] = ', '.join(it.name for it in track.artists)
+        tags['album'] = ', '.join(it.name for it in track.albums)
+        tags.save()
+
+    def main():
+        folder.mkdir(exist_ok=True)
+    
+        local_tracks = compute_local_tracks()
+        mounts = compute_mounts(local_tracks)
+
+        for path in compute_redundant_tracks(local_tracks, mounts):
+            path.unlink()
+            message(colorama.Fore.CYAN, '-', mounts[path])
+
+        for track in compute_non_fetched_tracks(local_tracks, mounts):
+            try:
+                download(track)
+                message(colorama.Fore.GREEN, '+', track)
+            except yandex_music.exceptions.Unauthorized:
+                message(colorama.Fore.RED, '>', track)
+
+        local_tracks = compute_local_tracks()
+        mounts = compute_mounts(local_tracks)
+        for path, index in compute_order(local_tracks, mounts).items():
+            path.rename(folder / f'{index}_{path.stem.split("_")[-1]}.mp3')
+
+    return main()
+
 client = Client.from_token(os.environ['MUSIC_TOKEN'])
+folder = {
+    'linux':  pathlib.Path('/storage/emulated/0/Music'),
+    'win32': pathlib.Path('C:/Users/naoh4/Music'),
+}[sys.platform]
