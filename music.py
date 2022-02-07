@@ -139,6 +139,17 @@ class Client(Wrapper):
         result = map(Playlist, result)
         return list(result)
 
+def search(client, query):
+    result = client.handle.search(query)
+    result = result.best
+    klass = {
+        'track': Track,
+        'album': Album,
+        'artist': Artist,
+        'playlist': Playlist,
+    }
+    return klass[result.type](result.result)
+
 def sync(client, folder, tracks):
     def message(color, status, track):
         name = track.name
@@ -174,7 +185,7 @@ def sync(client, folder, tracks):
 
     def main():
         folder.mkdir(exist_ok=True)
-    
+
         local_tracks = compute_local_tracks()
         mounts = compute_mounts(local_tracks)
 
