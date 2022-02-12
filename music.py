@@ -1,9 +1,11 @@
 import colorama
 import functools
 import itertools
+import mutagen.id3
 import mutagen.mp3
 import os
 import pathlib
+import requests
 import sys
 import yandex_music
 
@@ -37,6 +39,12 @@ class Track(Wrapper):
         result = self.handle.artists
         result = map(Artist, result)
         return list(result)
+
+    @functools.cached_property
+    def cover(self):
+        uri = f'https://{self.handle.cover_uri.replace("%%", "400x400")}'
+        result = requests.get(uri)
+        return result.content
 
 class Album(Wrapper):
     @property
@@ -177,10 +185,21 @@ def sync(client, folder, tracks):
     def download(track):
         path = folder / f'{track.id}.mp3'
         track.handle.download(path)
+
         tags = mutagen.mp3.EasyMP3(path)
         tags['title'] = track.name
         tags['artist'] = ', '.join(it.name for it in track.artists)
         tags['album'] = ', '.join(it.name for it in track.albums)
+        tags.save()
+
+        tags = mutagen.id3.ID3(path)
+        tags['APIC'] = mutagen.id3.APIC(
+            encoding=3,
+            mime='image/jpeg',
+            type=3,
+            desc=u'Cover',
+            data=track.cover
+        )
         tags.save()
 
     def main():
