@@ -7,6 +7,7 @@ import os
 import pathlib
 import requests
 import sys
+import tqdm
 import yandex_music
 
 colorama.init(autoreset=True)
@@ -160,9 +161,12 @@ def search(client, query):
 
 def sync(client, folder, tracks):
     def message(color, status, track):
+        width, _ = os.get_terminal_size()
         name = track.name
         artists = ', '.join(it.name for it in track.artists)
-        print(color + f'[{status}]', f'{name} - {artists}')
+        output = f'{{}}{{}}[{status}]{{}} {name} - {artists}'
+        output_without_escapes = output.format('', '', '')
+        print(output.format('\r', color, colorama.Fore.RESET) + ' ' * (width - len(output_without_escapes)))
 
     def compute_local_tracks():
         return list(folder.glob('*.mp3'))
@@ -182,9 +186,29 @@ def sync(client, folder, tracks):
     def compute_order(local_tracks, mounts):
         return {path: tracks.index(mount) for path, mount in mounts.items()}
 
+    def download_impl(track, path):
+        url = track.handle.get_download_info(get_direct_links=True)
+        url = url[0].direct_link
+
+        response = requests.get(url, stream=True)
+        total = int(response.headers.get('content-length', 0))
+        with tqdm.tqdm(
+            desc=track.name,
+            total=total,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+            leave=False,
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{rate_fmt}{postfix}]'
+        ) as bar, \
+        open(path, 'wb') as file:
+            for data in response.iter_content(chunk_size=1024):
+                size = file.write(data)
+                bar.update(size)
+
     def download(track):
         path = folder / f'{track.id}.mp3'
-        track.handle.download(path)
+        download_impl(track, path)
 
         tags = mutagen.mp3.EasyMP3(path)
         tags['title'] = track.name
@@ -212,7 +236,7 @@ def sync(client, folder, tracks):
             path.unlink()
             message(colorama.Fore.CYAN, '-', mounts[path])
 
-        for track in compute_non_fetched_tracks(local_tracks, mounts):
+        for track in tqdm.tqdm(compute_non_fetched_tracks(local_tracks, mounts), leave=False):
             try:
                 download(track)
                 message(colorama.Fore.GREEN, '+', track)
