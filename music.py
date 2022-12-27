@@ -7,6 +7,9 @@ import subprocess
 import warnings
 
 import bs4
+import ffpb  # type: ignore[import]
+import requests
+import tqdm
 import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
@@ -91,9 +94,24 @@ class VKontakteTrack(Show):
         return f"{self.artists} - {self.title}"
 
     def download(self, path: pathlib.Path) -> None:
-        subprocess.run(
-            ["ffmpeg", "-http_persistent", "false", "-loglevel", "quiet", "-i", self.url, "-codec", "copy", path]
-        )
+        class Bar(tqdm.tqdm):  # type: ignore[type-arg]
+            def __init__(self, **kwargs: dict[str, Any]):
+                assert isinstance(kwargs["total"], int)
+
+                super().__init__(ascii=".:", desc="Receiving track", total=kwargs["total"])
+
+        with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
+            process = subprocess.Popen(
+                ["ffmpeg", "-http_persistent", "false", "-i", self.url, "-codec", "copy", path],
+                stderr=subprocess.PIPE,
+            )
+
+            while True:
+                if stream := process.stderr:
+                    if data := stream.read(1):
+                        notifier(data)
+                    elif process.poll() is not None:
+                        break
 
 
 #
@@ -146,7 +164,21 @@ class YandexMusicTrack(Show):
         return self._impl.title or ""
 
     def download(self, path: pathlib.Path) -> None:
-        self._impl.download(str(path))
+        url = self._impl.get_download_info()[0].get_direct_link()
+        response = requests.get(url, stream=True)
+        length = int(response.headers["content-length"])
+
+        with tqdm.tqdm(
+            ascii=".:",
+            desc="Receiving track",
+            total=length,
+            unit_divisor=1024,
+            unit_scale=True,
+            unit="B",
+        ) as bar:
+            with path.open("wb") as file:
+                for data in response.iter_content(chunk_size=1024):
+                    bar.update(file.write(data))
 
 
 #
@@ -164,9 +196,8 @@ def main() -> None:
             path = MUSIC_FOLDER / "ВКонтакте" / f"{remove_invalid_path_chars(str(it))}.mp3"
 
             if not path.exists():
-                print(f"Downloading `{it}`...", flush=True, end="")
+                print(f"Downloading `{it}`")
                 it.download(path)
-                print("\b\b\b, done")
 
     def yandex_music_routine() -> None:
         client = YandexMusicClient(os.environ["YANDEX_LOGIN"], os.environ["YANDEX_PASSWORD"])
@@ -177,9 +208,8 @@ def main() -> None:
             path = MUSIC_FOLDER / "Яндекс Музыка" / f"{remove_invalid_path_chars(str(it))}.mp3"
 
             if not path.exists():
-                print(f"Downloading `{it}`...", flush=True, end="")
+                print(f"Downloading `{it}`")
                 it.download(path)
-                print("\b\b\b, done")
 
     vkontakte_routine()
     yandex_music_routine()
