@@ -11,6 +11,7 @@ import warnings
 
 import bs4
 import ffpb  # type: ignore[import]
+import mutagen.id3
 import requests
 import tqdm
 import vk_api  # type: ignore[import]
@@ -135,6 +136,11 @@ class VKontakteTrack(Show):
                         elif process.poll() is not None:
                             break
 
+                tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
+                tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
+                tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
+                tags.save(tmp_path)
+
 
 #
 # Яндекс Музыка
@@ -202,6 +208,11 @@ class YandexMusicTrack(Show):
                 with tmp_path.open("wb") as file:
                     for data in response.iter_content(chunk_size=1024):
                         bar.update(file.write(data))
+
+                tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
+                tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
+                tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
+                tags.save(tmp_path)
 
 
 #
