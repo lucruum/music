@@ -12,6 +12,7 @@ import uuid
 import warnings
 
 import bs4
+import colorama
 import ffpb  # type: ignore[import]
 import mutagen.id3
 import requests
@@ -58,6 +59,74 @@ class AutovivificiousDict(dict[str, Any]):
     def __missing__(self, key: str) -> Any:
         self[key] = AutovivificiousDict()
         return self[key]
+
+
+#
+# Ввод/вывод
+#
+
+
+def split_ansi(s: str) -> Iterator[str]:
+    """
+    Разбивает строку на символы и управляющие ANSI-последовательности:
+
+    >>> list(split_ansi('\x1b[31mfoo\x1b[0m'))
+    ['\\x1b[31m', 'f', 'o', 'o', '\\x1b[0m']
+    """
+    for i, it in enumerate(re.split(r"(\x1b\[\d+m)", s)):
+        if i % 2 == 0:
+            yield from it
+        else:
+            yield it
+
+
+def visual_length(s: str) -> int:
+    """
+    Длина строки без учёта управляющих ANSI-последовательностей:
+
+    >>> visual_length('\x1b[31mfoo\x1b[0m')
+    3
+    """
+    return sum(it.isprintable() for it in split_ansi(s))
+
+
+def fit(s: str, width: int, placeholder: str = "...") -> str:
+    """
+    Подрезает строку, чтобы она вписывалась в заданную ширину:
+
+    >>> fit("Hello, World!", 10)
+    'Hello, ...'
+    >>> fit("Hello, World!", 10, placeholder='>')
+    'Hello, Wo>'
+    >>> fit("Hello, World!", 20)
+    'Hello, World!'
+    """
+    words = list(split_ansi(s))
+    length = visual_length(s)
+
+    if length > width:
+        n_popped = 0
+        while n_popped < length - width + visual_length(placeholder):
+            n_popped += len(words[-1]) == 1
+            words.pop()
+        words += placeholder
+
+    return "".join(words)
+
+
+def markup(s: str) -> str:
+    """Стилизация текста при помощи Markdown-разметки"""
+    s = re.sub("`(.*?)`", rf"{colorama.Fore.LIGHTYELLOW_EX}\1{colorama.Style.RESET_ALL}", s)
+    s = re.sub(r"\*(.*?)\*", rf"{colorama.Fore.LIGHTBLACK_EX}\1{colorama.Style.RESET_ALL}", s)
+    return s
+
+
+def write(*objs: Any, end: str = "\n", flush: bool = True, sep: str = " ") -> None:
+    """Стилизованный вывод"""
+    output = sep.join(map(str, objs))
+    output = markup(output)
+    output = fit(output, os.get_terminal_size()[0], f"{colorama.Style.RESET_ALL}…")
+    print(output, end=end, flush=flush)
 
 
 #
@@ -154,7 +223,7 @@ def make_vkontakte_client(config: AutovivificiousDict) -> VKontakteClient:
             config["vkontakte"]["credentials"] = (login, password)
             return VKontakteClient(login, password)
         except vk_api.exceptions.BadPassword:
-            print("Invalid login or password")
+            write("Invalid login or password")
             login = input("VKontakte login: ")
             password = input(f"{login.split('@')[0]}'s password: ")
 
@@ -244,7 +313,7 @@ def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
             config["yandex_music"]["credentials"] = (login, password)
             return YandexMusicClient(login, password)
         except yandex_music.exceptions.BadRequest:
-            print("Invalid login or password")
+            write("Invalid login or password")
             login = input("Yandex Music login: ")
             password = input(f"{login.split('@')[0]}'s password: ")
 
@@ -337,7 +406,7 @@ def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
                 artists = tags["TPE1"]
                 title = tags["TIT2"]
 
-                print(f"Removing `{artists} - {title}`")
+                write(f"Removing `{artists} - {title}`")
                 path.unlink()
 
     def arrange_files() -> None:
@@ -348,11 +417,11 @@ def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
             it.rename(it.with_stem(f"{index}_{id_}"))
 
     def download_missing_tracks() -> None:
-        for it in missing_tracks:
+        for i, it in enumerate(missing_tracks):
             id_ = it.id
             index = track_indices[id_]
 
-            print(f"Downloading `{it}`")
+            write(f"[*{i + 1}*/*{len(missing_tracks)}*] Downloading `{it}`")
             it.download(dest_folder / f"{index}_{id_}.mp3")
 
     remove_extraneous_tracks()
