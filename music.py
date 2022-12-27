@@ -1,9 +1,12 @@
-from typing import Any
+from typing import Any, Iterator
 import abc
+import contextlib
 import os
 import pathlib
 import re
 import subprocess
+import tempfile
+import uuid
 import warnings
 
 import bs4
@@ -43,6 +46,24 @@ MUSIC_FOLDER = pathlib.Path(f"{os.environ['USERPROFILE']}") / "Music"
 def remove_invalid_path_chars(s: str) -> str:
     """Удаляет из строки символы, недопустимые в именах путей"""
     return re.sub(r'[:?"*/\<>|]', "", s)
+
+
+@contextlib.contextmanager
+def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
+    """
+    Гарантирует отсутствие файлов, находящихся в промежуточном состоянии:
+    при успешном выполнении контекста файл перемещается из /tmp в `path`
+    """
+    tmp_path = pathlib.Path(tempfile.gettempdir()) / f"{uuid.uuid4()}{suffix}"
+
+    try:
+        yield tmp_path
+    except (Exception, KeyboardInterrupt):
+        raise
+    else:
+        tmp_path.rename(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 #
@@ -101,17 +122,18 @@ class VKontakteTrack(Show):
                 super().__init__(ascii=".:", desc="Receiving track", total=kwargs["total"])
 
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
-            process = subprocess.Popen(
-                ["ffmpeg", "-http_persistent", "false", "-i", self.url, "-codec", "copy", path],
-                stderr=subprocess.PIPE,
-            )
+            with atomic_path(path, suffix=".mp3") as tmp_path:
+                process = subprocess.Popen(
+                    ["ffmpeg", "-http_persistent", "false", "-i", self.url, "-codec", "copy", tmp_path],
+                    stderr=subprocess.PIPE,
+                )
 
-            while True:
-                if stream := process.stderr:
-                    if data := stream.read(1):
-                        notifier(data)
-                    elif process.poll() is not None:
-                        break
+                while True:
+                    if stream := process.stderr:
+                        if data := stream.read(1):
+                            notifier(data)
+                        elif process.poll() is not None:
+                            break
 
 
 #
@@ -176,9 +198,10 @@ class YandexMusicTrack(Show):
             unit_scale=True,
             unit="B",
         ) as bar:
-            with path.open("wb") as file:
-                for data in response.iter_content(chunk_size=1024):
-                    bar.update(file.write(data))
+            with atomic_path(path) as tmp_path:
+                with tmp_path.open("wb") as file:
+                    for data in response.iter_content(chunk_size=1024):
+                        bar.update(file.write(data))
 
 
 #
