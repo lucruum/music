@@ -1,0 +1,1 @@
+yandex_music==1.0.0
