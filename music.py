@@ -1,4 +1,4 @@
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol, Sequence
 import abc
 import contextlib
 import os
@@ -109,6 +109,7 @@ class VKontakteUser(Show):
 class VKontakteTrack(Show):
     def __init__(self, impl: dict[str, Any]):
         self.artists = impl["artist"]
+        self.id = f"{impl['owner_id']}{impl['id']}"
         self.title = impl["title"]
         self.url = impl["url"]
 
@@ -188,6 +189,10 @@ class YandexMusicTrack(Show):
         return ", ".join(self._impl.artists_name())
 
     @property
+    def id(self) -> str:
+        return str(self._impl.id)
+
+    @property
     def title(self) -> str:
         return self._impl.title or ""
 
@@ -216,6 +221,57 @@ class YandexMusicTrack(Show):
 
 
 #
+# Общее
+#
+
+
+class Downloadable(Protocol):
+    @property
+    def id(self) -> str:
+        pass
+
+    def download(self, path: pathlib.Path) -> None:
+        pass
+
+
+def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
+    """Односторонняя синхронизация папки с треками"""
+    track_ids = {it.id for it in src_tracks}
+    track_indices = {it.id: i for i, it in enumerate(src_tracks)}
+    uploaded_tracks = {it.stem.split("_")[-1]: it for it in dest_folder.glob("*.mp3")}
+    missing_tracks = [it for it in src_tracks if it.id not in uploaded_tracks]
+
+    def remove_extraneous_tracks() -> None:
+        for id_, path in uploaded_tracks.items():
+            if id_ not in track_ids:
+                tags = mutagen.File(path)  # type: ignore[attr-defined]
+                artists = tags["TPE1"]
+                title = tags["TIT2"]
+
+                print(f"Removing `{artists} - {title}`")
+                path.unlink()
+
+    def arrange_files() -> None:
+        for it in dest_folder.glob("*.mp3"):
+            id_ = it.stem.split("_")[-1]
+            index = track_indices[id_]
+
+            it.rename(it.with_stem(f"{index}_{id_}"))
+
+    def download_missing_tracks() -> None:
+        for it in missing_tracks:
+            id_ = it.id
+            index = track_indices[id_]
+
+            print(f"Downloading `{it}`")
+            it.download(dest_folder / f"{index}_{id_}.mp3")
+
+    remove_extraneous_tracks()
+    arrange_files()
+    download_missing_tracks()
+
+
+#
 # Точка входа
 #
 
@@ -226,24 +282,14 @@ def main() -> None:
         user = client.user()
         tracks = user.tracks
 
-        for it in tracks:
-            path = MUSIC_FOLDER / "ВКонтакте" / f"{remove_invalid_path_chars(str(it))}.mp3"
-
-            if not path.exists():
-                print(f"Downloading `{it}`")
-                it.download(path)
+        sync(tracks, MUSIC_FOLDER / "ВКонтакте")
 
     def yandex_music_routine() -> None:
         client = YandexMusicClient(os.environ["YANDEX_LOGIN"], os.environ["YANDEX_PASSWORD"])
         user = client.user()
         tracks = user.tracks
 
-        for it in tracks:
-            path = MUSIC_FOLDER / "Яндекс Музыка" / f"{remove_invalid_path_chars(str(it))}.mp3"
-
-            if not path.exists():
-                print(f"Downloading `{it}`")
-                it.download(path)
+        sync(tracks, MUSIC_FOLDER / "Яндекс Музыка")
 
     vkontakte_routine()
     yandex_music_routine()
