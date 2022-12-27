@@ -1,8 +1,10 @@
 from typing import Any, Iterator, Protocol, Sequence
 import abc
+import atexit
 import contextlib
 import os
 import pathlib
+import pickle
 import re
 import subprocess
 import tempfile
@@ -37,6 +39,28 @@ class Show(abc.ABC):
 
 
 #
+# Коллекции
+#
+
+
+class AutovivificiousDict(dict[str, Any]):
+    """
+    'Автоматически оживляемый словарь' - https://en.wikipedia.org/wiki/Autovivification
+
+    Позволяет ссылаться на произвольные значения словаря без их явного объявления:
+
+    >>> d = AutovivificiousDict()
+    >>> d['foo']['bar']['baz'] = 42
+    >>> d
+    {'foo': {'bar': {'baz': 42}}}
+    """
+
+    def __missing__(self, key: str) -> Any:
+        self[key] = AutovivificiousDict()
+        return self[key]
+
+
+#
 # Файловая система
 #
 
@@ -68,6 +92,35 @@ def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
 
 
 #
+# Кэширование
+#
+
+
+def cache_file(path: pathlib.Path) -> AutovivificiousDict:
+    """
+    Кэш-файл, представляемый автоматически оживляемым словарём (см. `AutovivificiousDict`)
+    В течение работы программы данные хранятся в ОЗУ: выгрузка осуществляется при завершении программы
+    """
+
+    def load() -> AutovivificiousDict:
+        with path.open("rb") as file:
+            try:
+                return pickle.load(file)  # type: ignore[no-any-return]
+            except EOFError:
+                return AutovivificiousDict()
+
+    def dump(cache: AutovivificiousDict) -> None:
+        with path.open("wb") as file:
+            pickle.dump(cache, file)
+
+    path.touch(exist_ok=True)
+    cache = load()
+    atexit.register(lambda: dump(cache))
+
+    return cache
+
+
+#
 # ВКонтакте
 #
 
@@ -86,6 +139,24 @@ class VKontakteClient:
 
     def user(self, id_: str | int | None = None) -> "VKontakteUser":
         return VKontakteUser(self, id_)
+
+
+def make_vkontakte_client(config: AutovivificiousDict) -> VKontakteClient:
+    """Создание клиента с ранее введёнными учётными данными"""
+    if "credentials" in config["vkontakte"]:
+        login, password = config["vkontakte"]["credentials"]
+    else:
+        login = input("VKontakte login: ")
+        password = input(f"{login.split('@')[0]}'s password: ")
+
+    while True:
+        try:
+            config["vkontakte"]["credentials"] = (login, password)
+            return VKontakteClient(login, password)
+        except vk_api.exceptions.BadPassword:
+            print("Invalid login or password")
+            login = input("VKontakte login: ")
+            password = input(f"{login.split('@')[0]}'s password: ")
 
 
 class VKontakteUser(Show):
@@ -158,6 +229,24 @@ class YandexMusicClient:
 
     def user(self, id_: str | None = None) -> "YandexMusicUser":
         return YandexMusicUser(self, id_)
+
+
+def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
+    """Создание клиента с ранее введёнными учётными данными"""
+    if "credentials" in config["yandex_music"]:
+        login, password = config["yandex_music"]["credentials"]
+    else:
+        login = input("Yandex Music login: ")
+        password = input(f"{login.split('@')[0]}'s password: ")
+
+    while True:
+        try:
+            config["yandex_music"]["credentials"] = (login, password)
+            return YandexMusicClient(login, password)
+        except yandex_music.exceptions.BadRequest:
+            print("Invalid login or password")
+            login = input("Yandex Music login: ")
+            password = input(f"{login.split('@')[0]}'s password: ")
 
 
 class YandexMusicUser(Show):
@@ -277,15 +366,17 @@ def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
 
 
 def main() -> None:
+    config = cache_file(pathlib.Path(".config"))
+
     def vkontakte_routine() -> None:
-        client = VKontakteClient(os.environ["VKONTAKTE_LOGIN"], os.environ["VKONTAKTE_PASSWORD"])
+        client = make_vkontakte_client(config)
         user = client.user()
         tracks = user.tracks
 
         sync(tracks, MUSIC_FOLDER / "ВКонтакте")
 
     def yandex_music_routine() -> None:
-        client = YandexMusicClient(os.environ["YANDEX_LOGIN"], os.environ["YANDEX_PASSWORD"])
+        client = make_yandex_music_client(config)
         user = client.user()
         tracks = user.tracks
 
