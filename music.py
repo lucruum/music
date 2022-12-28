@@ -249,12 +249,20 @@ class VKontakteUser(Show):
 class VKontakteTrack(Show):
     def __init__(self, impl: dict[str, Any]):
         self.artists = impl["artist"]
+        # Обложки отсортированы по возрастанию расширения
+        self.cover_url = impl["track_covers"] and str(impl["track_covers"][-1]) or None
         self.id = f"{impl['owner_id']}{impl['id']}"
         self.title = impl["title"]
         self.url = impl["url"]
 
     def show(self) -> str:
         return f"{self.artists} - {self.title}"
+
+    @property
+    def cover(self) -> bytes:
+        if self.cover_url:
+            return requests.get(self.cover_url).content
+        return b""
 
     def download(self, path: pathlib.Path) -> None:
         class Bar(tqdm.tqdm):  # type: ignore[type-arg]
@@ -279,6 +287,7 @@ class VKontakteTrack(Show):
 
                 tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
                 tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
+                tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
                 tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
                 tags.save(tmp_path)
 
@@ -343,12 +352,32 @@ class YandexMusicTrack(Show):
         return f"{self.artists} - {self.title}"
 
     @property
+    def album(self) -> str:
+        if albums := self._impl.albums:
+            return albums[0].title or ""
+        return ""
+
+    @property
     def artists(self) -> str:
         return ", ".join(self._impl.artists_name())
 
     @property
+    def cover(self) -> bytes:
+        if uri := self._impl.cover_uri:
+            url = f"https://{uri.replace('%%', '600x600')}"
+            return requests.get(url).content
+        return b""
+
+    @property
     def id(self) -> str:
         return str(self._impl.id)
+
+    @property
+    def lyrics(self) -> str:
+        if supplement := self._impl.get_supplement():
+            if lyrics := supplement.lyrics:
+                return lyrics.full_lyrics
+        return ""
 
     @property
     def title(self) -> str:
@@ -373,7 +402,10 @@ class YandexMusicTrack(Show):
                         bar.update(file.write(data))
 
                 tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
+                tags["TALB"] = mutagen.id3.TALB(text=self.album)  # type: ignore[attr-defined]
                 tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
+                tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
+                tags["USLT"] = mutagen.id3.USLT(text=self.lyrics)  # type: ignore[attr-defined]
                 tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
                 tags.save(tmp_path)
 
