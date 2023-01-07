@@ -232,7 +232,7 @@ class VKontakteUser(Show):
     def __init__(self, client: VKontakteClient, id_: str | int | None):
         info = client._api.users.get(user_ids=id_)[0]
 
-        self.client = client
+        self._client = client
         self.full_name = f"{info['first_name']} {info['last_name']}"
         self.id = str(info["id"])
 
@@ -243,25 +243,25 @@ class VKontakteUser(Show):
     def tracks(self) -> list["VKontakteTrack"]:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
-            return [VKontakteTrack(it) for it in self.client._audio.get_iter(self.id)]
+            return [VKontakteTrack(it) for it in self._client._audio.get_iter(self.id)]
 
 
 class VKontakteTrack(Show):
     def __init__(self, impl: dict[str, Any]):
-        self.artists = impl["artist"]
         # Обложки отсортированы по возрастанию расширения
-        self.cover_url = impl["track_covers"] and str(impl["track_covers"][-1]) or None
+        self._cover_url = impl["track_covers"] and str(impl["track_covers"][-1]) or None
+        self._url = impl["url"]
+        self.artists = impl["artist"]
         self.id = f"{impl['owner_id']}{impl['id']}"
         self.title = impl["title"]
-        self.url = impl["url"]
 
     def show(self) -> str:
         return f"{self.artists} - {self.title}"
 
     @property
     def cover(self) -> bytes:
-        if self.cover_url:
-            return requests.get(self.cover_url).content
+        if self._cover_url:
+            return requests.get(self._cover_url).content
         return b""
 
     def download(self, path: pathlib.Path) -> None:
@@ -274,7 +274,7 @@ class VKontakteTrack(Show):
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
             with atomic_path(path, suffix=".mp3") as tmp_path:
                 process = subprocess.Popen(
-                    ["ffmpeg", "-http_persistent", "false", "-i", self.url, "-codec", "copy", tmp_path],
+                    ["ffmpeg", "-http_persistent", "false", "-i", self._url, "-codec", "copy", tmp_path],
                     stderr=subprocess.PIPE,
                 )
 
@@ -332,7 +332,7 @@ class YandexMusicUser(Show):
         info_url = f"{client._impl.base_url}/users/{id_}"
         info = client._impl._request.get(info_url)
 
-        self.client = client
+        self._client = client
         self.id = str(info["uid"])
         self.name = str(info["name"])
 
@@ -341,7 +341,7 @@ class YandexMusicUser(Show):
 
     @property
     def tracks(self) -> list["YandexMusicTrack"]:
-        return [YandexMusicTrack(it) for it in self.client._impl.users_likes_tracks(self.id).fetch_tracks()]
+        return [YandexMusicTrack(it) for it in self._client._impl.users_likes_tracks(self.id).fetch_tracks()]
 
 
 class YandexMusicTrack(Show):
