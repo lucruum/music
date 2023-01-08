@@ -1,4 +1,4 @@
-from typing import Any, Iterator, Protocol, Sequence
+from typing import Any, Iterator, Optional, Sequence
 import abc
 import atexit
 import contextlib
@@ -20,6 +20,7 @@ import tqdm
 import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
+import ytmusicapi  # type: ignore[import]
 
 
 #
@@ -190,6 +191,96 @@ def cache_file(path: pathlib.Path) -> AutovivificiousDict:
 
 
 #
+# База данных
+#
+
+
+class Database:
+    def __init__(self) -> None:
+        self._youtube_music_database = YouTubeMusicDatabase()
+
+    def search_track(self, query: str) -> "DatabaseTrack":
+        return DatabaseTrack(self, query)
+
+
+class DatabaseTrack:
+    def __init__(self, database: Database, query: str):
+        self._database = database
+        self._query = query
+
+    @property
+    def album(self) -> str:
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.album:
+                return youtube_found.album
+        return ""
+
+    @property
+    def artists(self) -> str:
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.artists:
+                return youtube_found.artists
+        return ""
+
+    @property
+    def cover(self) -> bytes:
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.cover:
+                return youtube_found.cover
+        return b""
+
+    @property
+    def lyrics(self) -> str:
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.lyrics:
+                return youtube_found.lyrics
+        return ""
+
+    @property
+    def title(self) -> str:
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.title:
+                return youtube_found.title
+        return ""
+
+
+class YouTubeMusicDatabase:
+    _IMPL = ytmusicapi.YTMusic()
+    # Язык возвращаемых данных задаётся параметром `language` конструктора `YTMusic`,
+    # но в виду того, что библиотека не поддерживает русскую локализацию,
+    # выставляем язык хоста напрямую в заголовках
+    # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
+    _IMPL.context["context"]["client"]["hl"] = "ru"
+
+    def search_track(self, query: str) -> Optional["YouTubeMusicDatabaseTrack"]:
+        if found := YouTubeMusicDatabase._IMPL.search(query, filter="songs", limit=1):
+            return YouTubeMusicDatabaseTrack(found[0])
+        return None
+
+
+class YouTubeMusicDatabaseTrack:
+    def __init__(self, impl: dict[str, Any]):
+        self._cover_url = str(impl["thumbnails"][0]["url"]).replace("w60-h60", "w600-h600")
+        self._video_id = str(impl["videoId"])
+        self.album = str(impl["album"]["name"])
+        self.artists = ", ".join(it["name"] for it in impl["artists"])
+        self.title = str(impl["title"])
+
+    @property
+    def cover(self) -> bytes:
+        return requests.get(self._cover_url).content
+
+    @property
+    def lyrics(self) -> str:
+        try:
+            playlist = YouTubeMusicDatabase._IMPL.get_watch_playlist(self._video_id, limit=1)
+            result = YouTubeMusicDatabase._IMPL.get_lyrics(playlist["lyrics"])["lyrics"]
+            return result is not None and str(result) or ""
+        except Exception:
+            return ""
+
+
+#
 # ВКонтакте
 #
 
@@ -264,6 +355,17 @@ class VKontakteTrack(Show):
             return requests.get(self._cover_url).content
         return b""
 
+    def saturated_metadata(self, suggestion: DatabaseTrack) -> "TrackMetadata":
+        return TrackMetadata(
+            album=suggestion.album,
+            artists=self.artists,
+            # ВКонтакте возвращает обложки низкого качества (160x160 пикселей),
+            # поэтому отдаём предпочтение обложке из базы данных
+            cover=suggestion.cover or self.cover,
+            lyrics=suggestion.lyrics,
+            title=self.title,
+        )
+
     def download(self, path: pathlib.Path) -> None:
         class Bar(tqdm.tqdm):  # type: ignore[type-arg]
             def __init__(self, **kwargs: dict[str, Any]):
@@ -272,24 +374,17 @@ class VKontakteTrack(Show):
                 super().__init__(ascii=".:", desc="Receiving track", total=kwargs["total"])
 
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
-            with atomic_path(path, suffix=".mp3") as tmp_path:
-                process = subprocess.Popen(
-                    ["ffmpeg", "-http_persistent", "false", "-i", self._url, "-codec", "copy", tmp_path],
-                    stderr=subprocess.PIPE,
-                )
+            process = subprocess.Popen(
+                ["ffmpeg", "-http_persistent", "false", "-i", self._url, "-codec", "copy", path],
+                stderr=subprocess.PIPE,
+            )
 
-                while True:
-                    if stream := process.stderr:
-                        if data := stream.read(1):
-                            notifier(data)
-                        elif process.poll() is not None:
-                            break
-
-                tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
-                tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
-                tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
-                tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
-                tags.save(tmp_path)
+            while True:
+                if stream := process.stderr:
+                    if data := stream.read(1):
+                        notifier(data)
+                    elif process.poll() is not None:
+                        break
 
 
 #
@@ -383,6 +478,15 @@ class YandexMusicTrack(Show):
     def title(self) -> str:
         return self._impl.title or ""
 
+    def saturated_metadata(self, suggestion: DatabaseTrack) -> "TrackMetadata":
+        return TrackMetadata(
+            album=self.album,
+            artists=self.artists,
+            cover=self.cover,
+            lyrics=self.lyrics or suggestion.lyrics,
+            title=self.title,
+        )
+
     def download(self, path: pathlib.Path) -> None:
         url = self._impl.get_download_info()[0].get_direct_link()
         response = requests.get(url, stream=True)
@@ -396,18 +500,9 @@ class YandexMusicTrack(Show):
             unit_scale=True,
             unit="B",
         ) as bar:
-            with atomic_path(path) as tmp_path:
-                with tmp_path.open("wb") as file:
-                    for data in response.iter_content(chunk_size=1024):
-                        bar.update(file.write(data))
-
-                tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
-                tags["TALB"] = mutagen.id3.TALB(text=self.album)  # type: ignore[attr-defined]
-                tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
-                tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
-                tags["USLT"] = mutagen.id3.USLT(text=self.lyrics)  # type: ignore[attr-defined]
-                tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
-                tags.save(tmp_path)
+            with path.open("wb") as file:
+                for data in response.iter_content(chunk_size=1024):
+                    bar.update(file.write(data))
 
 
 #
@@ -415,16 +510,29 @@ class YandexMusicTrack(Show):
 #
 
 
-class Downloadable(Protocol):
-    @property
-    def id(self) -> str:
-        pass
+class TrackMetadata:
+    def __init__(self, *, album: str, artists: str, cover: bytes, lyrics: str, title: str):
+        self.album = album
+        self.artists = artists
+        self.cover = cover
+        self.lyrics = lyrics
+        self.title = title
 
-    def download(self, path: pathlib.Path) -> None:
-        pass
+    def embed(self, path: pathlib.Path) -> None:
+        tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
+        tags["TALB"] = mutagen.id3.TALB(text=self.album)  # type: ignore[attr-defined]
+        tags["TPE1"] = mutagen.id3.TPE1(text=self.artists)  # type: ignore[attr-defined]
+        tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
+        tags["USLT"] = mutagen.id3.USLT(text=self.lyrics)  # type: ignore[attr-defined]
+        tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
+        tags.save(path)
 
 
-def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
+def sync(
+    src_tracks: Sequence[VKontakteTrack | YandexMusicTrack],
+    dest_folder: pathlib.Path,
+    database: Database,
+) -> None:
     """Односторонняя синхронизация папки с треками"""
     track_ids = {it.id for it in src_tracks}
     track_indices = {it.id: i for i, it in enumerate(src_tracks)}
@@ -454,7 +562,11 @@ def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
             index = track_indices[id_]
 
             write(f"[*{i + 1}*/*{len(missing_tracks)}*] Downloading `{it}`")
-            it.download(dest_folder / f"{index}_{id_}.mp3")
+            with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
+                it.download(tmp_path)
+                write("Embedding metadata...", flush=True, end="")
+                it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
+                write("\b\b\b, done")
 
     remove_extraneous_tracks()
     arrange_files()
@@ -468,20 +580,21 @@ def sync(src_tracks: Sequence[Downloadable], dest_folder: pathlib.Path) -> None:
 
 def main() -> None:
     config = cache_file(pathlib.Path(".config"))
+    database = Database()
 
     def vkontakte_routine() -> None:
         client = make_vkontakte_client(config)
         user = client.user()
         tracks = user.tracks
 
-        sync(tracks, MUSIC_FOLDER / "ВКонтакте")
+        sync(tracks, MUSIC_FOLDER / "ВКонтакте", database)
 
     def yandex_music_routine() -> None:
         client = make_yandex_music_client(config)
         user = client.user()
         tracks = user.tracks
 
-        sync(tracks, MUSIC_FOLDER / "Яндекс Музыка")
+        sync(tracks, MUSIC_FOLDER / "Яндекс Музыка", database)
 
     vkontakte_routine()
     yandex_music_routine()

@@ -6,3 +6,4 @@ requests
 tqdm
 vk_api
 yandex_music==1.0.0
+ytmusicapi
