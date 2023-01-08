@@ -215,7 +215,32 @@ class Database:
         self._youtube_music_database = YouTubeMusicDatabase()
 
     def search_track(self, query: str) -> "DatabaseTrack":
-        return DatabaseTrack(self, query)
+        return DatabaseTrack(self, Database._optimized_query(query))
+
+    @staticmethod
+    def _optimized_query(query: str) -> str:
+        """
+        Оптимизирует запрос для поиска, удаляя из него лишние фрагменты:
+
+        >>> Database._optimized_query('Хаски - Ай [Slowed + Reverb] By THAWANTEDZ ⑦⑦⑦')
+        'Хаски - Ай'
+
+        Иногда метод ведёт себя слишком агрессивно, удаляя существенные части из строки:
+
+        >>> Database._optimized_query('Lana Del Rey - High By The Beach')
+        'Lana Del Rey - High'
+
+        но в целом бэкенд-сервисы прекрасно справляются с такими запросами
+        """
+
+        def strip_author(s: str) -> str:
+            s = re.sub(r"(.*)\sby\s.*", r"\1", s, flags=re.IGNORECASE)
+            return s
+
+        query = re.sub(r"\s+", " ", query)
+        query = re.sub(r"\s*[\{\[\(].*?[\)\]\}]", "", query)
+        query = " - ".join(filter(None, map(strip_author, query.split(" - "))))
+        return query
 
 
 class DatabaseTrack:
