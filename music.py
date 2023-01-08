@@ -62,6 +62,20 @@ class AutovivificiousDict(dict[str, Any]):
         return self[key]
 
 
+def flatten(obj: Any) -> Iterator[Any]:
+    """
+    'Сглаживающий' итератор для произвольно вложенной коллекции:
+
+    >>> list(flatten([1, [[2, 3], 4, [5]]]))
+    [1, 2, 3, 4, 5]
+    """
+    for it in obj:
+        if isinstance(it, (list, tuple)):
+            yield from flatten(it)
+        else:
+            yield it
+
+
 #
 # Ввод/вывод
 #
@@ -197,6 +211,7 @@ def cache_file(path: pathlib.Path) -> AutovivificiousDict:
 
 class Database:
     def __init__(self) -> None:
+        self._genius_database = GeniusDatabase()
         self._youtube_music_database = YouTubeMusicDatabase()
 
     def search_track(self, query: str) -> "DatabaseTrack":
@@ -213,6 +228,9 @@ class DatabaseTrack:
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.album:
                 return youtube_found.album
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.album:
+                return genius_found.album
         return ""
 
     @property
@@ -220,6 +238,9 @@ class DatabaseTrack:
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.artists:
                 return youtube_found.artists
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.artists:
+                return genius_found.artists
         return ""
 
     @property
@@ -227,6 +248,9 @@ class DatabaseTrack:
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.cover:
                 return youtube_found.cover
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.cover:
+                return genius_found.cover
         return b""
 
     @property
@@ -234,6 +258,9 @@ class DatabaseTrack:
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.lyrics:
                 return youtube_found.lyrics
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.lyrics:
+                return genius_found.lyrics
         return ""
 
     @property
@@ -241,7 +268,134 @@ class DatabaseTrack:
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.title:
                 return youtube_found.title
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.title:
+                return genius_found.title
         return ""
+
+
+class GeniusDatabase:
+    # У переведённых текстов песен в качестве исполнителя указывается
+    # "Genius Translations" или имя из списка https://genius.com/15897404?
+    TRANSLATION_ARTIST_NAMES = {
+        "Genius Albanian Translations",
+        "Genius Arabic Translations",
+        "Genius Azerbaijani Translations",
+        "Genius Brasil Translations",
+        "Genius Catalan Translations",
+        "Genius Chinese Translations",
+        "Genius Czech Translations",
+        "Genius Dutch Translations",
+        "Genius English Translations",
+        "Genius Farsi Translations",
+        "Genius Filipino Translations",
+        "Genius French Translations",
+        "Genius German Translations",
+        "Genius Greek Translations",
+        "Genius Hebrew Translations",
+        "Genius Hindi Translation",
+        "Genius Hungarian Translation",
+        "Genius Icelandic Translations",
+        "Genius Italian Translations",
+        "Genius Japanese Translations",
+        "Genius Korean Translations",
+        "Genius Polish Translations",
+        "Genius Romanian Translations",
+        "Genius Romanizations",
+        "Genius Russian Translations",
+        "Genius Serbian Translations",
+        "Genius Slovak Translations",
+        "Genius South Africa Translations",
+        "Genius Spanish Translations",
+        "Genius Swedish Translations",
+        "Genius Thai Translations",
+        "Genius Translations",
+        "Genius Turkish Translations",
+        "Genius Ukrainian Translation",
+        "Genius Vietnamese Translations",
+    }
+
+    def search_track(self, query: str) -> Optional["GeniusDatabaseTrack"]:
+        response = requests.get("https://genius.com/api/search/song", params={"q": query})
+
+        for it in response.json()["response"]["sections"][0]["hits"]:
+            if it["result"]["artist_names"] not in GeniusDatabase.TRANSLATION_ARTIST_NAMES:
+                return GeniusDatabaseTrack(it["result"])
+
+        return None
+
+
+class GeniusDatabaseTrack:
+    def __init__(self, impl: dict[str, Any]):
+        self._album_url = f"https://genius.com/api/songs/{impl['id']}"
+        self._cover_url = str(impl["header_image_url"])
+        self._lyrics_url = str(impl["url"])
+        self.artists = GeniusDatabaseTrack._strip_translation(impl["primary_artist"]["name"])
+        self.title = GeniusDatabaseTrack._strip_translation(impl["title"])
+
+    @staticmethod
+    def _strip_translation(s: str) -> str:
+        """
+        Некоторые строковые данные возвращаются Genius'ом вместе с переводом на английский:
+
+        >>> GeniusDatabaseTrack._strip_translation(
+        ...     'Любимые песни (воображаемых) людей (Favorite songs of (imaginary) people)'
+        ... )
+        'Любимые песни (воображаемых) людей'
+        """
+        balance = 0
+        for i, it in enumerate(reversed(s)):
+            if it == "(":
+                balance += 1
+            elif it == ")":
+                balance -= 1
+
+            if balance == 0:
+                break
+
+        if i == 0:
+            return s
+        return s[: len(s) - i - 2]
+
+    @property
+    def album(self) -> str:
+        response = requests.get(self._album_url)
+        if album := response.json()["response"]["song"]["album"]:
+            return GeniusDatabaseTrack._strip_translation(album["name"])
+        return ""
+
+    @property
+    def cover(self) -> bytes:
+        return requests.get(self._cover_url).content
+
+    @property
+    def lyrics(self) -> str:
+        html = requests.get(self._lyrics_url).text
+        soup = bs4.BeautifulSoup(html, "html.parser")
+
+        result = ""
+        for it in soup.find_all("div", {"data-lyrics-container": "true"}, recursive=True):
+            result += GeniusDatabaseTrack._scrape_text(it) + "\n"
+        return result.strip()
+
+    @staticmethod
+    def _scrape_text(element: bs4.element.PageElement) -> str:
+        """Извлечение текста с учётом элементов переноса строк"""
+
+        def impl(element: bs4.element.PageElement) -> list[str]:
+            if isinstance(element, bs4.element.NavigableString):
+                return [str(element)]
+            elif isinstance(element, bs4.element.Tag):
+                if element.name in ("a", "b", "em", "i", "span"):
+                    return [GeniusDatabaseTrack._scrape_text(it) for it in element.contents]
+                elif element.name in ("br", "div"):
+                    return [GeniusDatabaseTrack._scrape_text(it) for it in element.contents] + ["\n"]
+                else:
+                    assert False, "unreachable"
+            else:
+                assert False, "unreachable"
+
+        return "".join(flatten(impl(element)))
 
 
 class YouTubeMusicDatabase:
