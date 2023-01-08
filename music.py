@@ -210,9 +210,10 @@ def cache_file(path: pathlib.Path) -> AutovivificiousDict:
 
 
 class Database:
-    def __init__(self) -> None:
-        self._genius_database = GeniusDatabase()
-        self._youtube_music_database = YouTubeMusicDatabase()
+    def __init__(self, cache: AutovivificiousDict) -> None:
+        self._cache = cache
+        self._genius_database = GeniusDatabase(cache)
+        self._youtube_music_database = YouTubeMusicDatabase(cache)
 
     def search_track(self, query: str) -> "DatabaseTrack":
         return DatabaseTrack(self, Database._optimized_query(query))
@@ -340,13 +341,23 @@ class GeniusDatabase:
         "Genius Vietnamese Translations",
     }
 
-    def search_track(self, query: str) -> Optional["GeniusDatabaseTrack"]:
-        response = requests.get("https://genius.com/api/search/song", params={"q": query})
+    def __init__(self, cache: AutovivificiousDict):
+        self._cache = cache
 
+    def search_track(self, query: str) -> Optional["GeniusDatabaseTrack"]:
+        if query in self._cache["genius"]["tracks"]:
+            if self._cache["genius"]["tracks"][query] is not None:
+                return self._cache["genius"]["tracks"][query]  # type: ignore[no-any-return]
+            return None
+
+        response = requests.get("https://genius.com/api/search/song", params={"q": query})
         for it in response.json()["response"]["sections"][0]["hits"]:
             if it["result"]["artist_names"] not in GeniusDatabase.TRANSLATION_ARTIST_NAMES:
-                return GeniusDatabaseTrack(it["result"])
+                track = GeniusDatabaseTrack(it["result"])
+                self._cache["genius"]["tracks"][query] = track
+                return track
 
+        self._cache["genius"]["tracks"][query] = None
         return None
 
 
@@ -431,9 +442,21 @@ class YouTubeMusicDatabase:
     # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
     _IMPL.context["context"]["client"]["hl"] = "ru"
 
+    def __init__(self, cache: AutovivificiousDict):
+        self._cache = cache
+
     def search_track(self, query: str) -> Optional["YouTubeMusicDatabaseTrack"]:
+        if query in self._cache["youtube_music"]["tracks"]:
+            if self._cache["youtube_music"]["tracks"][query] is not None:
+                return self._cache["youtube_music"]["tracks"][query]  # type: ignore[no-any-return]
+            return None
+
         if found := YouTubeMusicDatabase._IMPL.search(query, filter="songs", limit=1):
-            return YouTubeMusicDatabaseTrack(found[0])
+            track = YouTubeMusicDatabaseTrack(found[0])
+            self._cache["youtube_music"]["tracks"][query] = track
+            return track
+
+        self._cache["youtube_music"]["tracks"][query] = None
         return None
 
 
@@ -759,7 +782,7 @@ def sync(
 
 def main() -> None:
     config = cache_file(pathlib.Path(".config"))
-    database = Database()
+    database = Database(cache_file(pathlib.Path(".database")))
 
     def vkontakte_routine() -> None:
         client = make_vkontakte_client(config)
