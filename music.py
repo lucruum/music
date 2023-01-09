@@ -412,7 +412,9 @@ class GeniusDatabaseTrack:
         result = ""
         for it in soup.find_all("div", {"data-lyrics-container": "true"}, recursive=True):
             result += GeniusDatabaseTrack._scrape_text(it) + "\n"
-        return result.strip()
+        result = result.strip()
+        result = GeniusDatabaseTrack._remove_section_headers(result)
+        return result
 
     @staticmethod
     def _scrape_text(element: bs4.element.PageElement) -> str:
@@ -432,6 +434,11 @@ class GeniusDatabaseTrack:
                 assert False, "unreachable"
 
         return "".join(flatten(impl(element)))
+
+    @staticmethod
+    def _remove_section_headers(s: str) -> str:
+        """Удаление '[Текст песни «…»]', '[Куплет]' и т.п. из текста песни"""
+        return re.sub("\\[.*?\\]\n+", "", s)
 
 
 class YouTubeMusicDatabase:
