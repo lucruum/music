@@ -495,7 +495,7 @@ class YouTubeMusicDatabaseTrack:
 
 
 class VKontakteClient:
-    def __init__(self, login: str, password: str):
+    def __init__(self, login: str, password: str, cache: AutovivificiousDict):
         session = vk_api.VkApi(
             login,
             password,
@@ -503,14 +503,18 @@ class VKontakteClient:
         )
         session.auth()
 
+        info = session.get_api().users.get(user_ids=None)[0]
+
         self._api = session.get_api()
         self._audio = vk_api.audio.VkAudio(session)
+        self._cache = cache
+        self.id = str(info["id"])
 
     def user(self, id_: str | int | None = None) -> "VKontakteUser":
         return VKontakteUser(self, id_)
 
 
-def make_vkontakte_client(config: AutovivificiousDict) -> VKontakteClient:
+def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDict) -> VKontakteClient:
     """Создание клиента с ранее введёнными учётными данными"""
     if "credentials" in config["vkontakte"]:
         login, password = config["vkontakte"]["credentials"]
@@ -521,7 +525,7 @@ def make_vkontakte_client(config: AutovivificiousDict) -> VKontakteClient:
     while True:
         try:
             config["vkontakte"]["credentials"] = (login, password)
-            return VKontakteClient(login, password)
+            return VKontakteClient(login, password, cache)
         except vk_api.exceptions.BadPassword:
             write("Invalid login or password")
             login = input("VKontakte login: ")
@@ -541,9 +545,75 @@ class VKontakteUser(Show):
 
     @property
     def tracks(self) -> list["VKontakteTrack"]:
+        return list(_VKontakteUserTracks(self))
+
+
+class _VKontakteUserTracks:
+    def __init__(self, user: VKontakteUser):
+        self._user = user
+
+    def __iter__(self) -> Iterator["VKontakteTrack"]:
+        hashes = self._hashes()
+
+        missing_hashes = []
+        for it in hashes:
+            id_ = "".join(it[:2])
+            if id_ not in self._user._client._cache["user_tracks"][self._user.id]:
+                missing_hashes.append(it)
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
-            return [VKontakteTrack(it) for it in self._client._audio.get_iter(self.id)]
+
+            for wrappee in tqdm.tqdm(
+                vk_api.audio.scrap_tracks(
+                    missing_hashes,
+                    int(self._user._client.id),
+                    self._user._client._audio._vk.http,
+                    convert_m3u8_links=self._user._client._audio.convert_m3u8_links,
+                ),
+                ascii=".:",
+                desc="Fetching tracks",
+                disable=len(missing_hashes) == 0,
+                total=len(missing_hashes),
+            ):
+                track = VKontakteTrack(wrappee)
+                self._user._client._cache["user_tracks"][self._user.id][track.id] = track
+
+        for it in hashes:
+            id_ = "".join(it[:2])
+            yield self._user._client._cache["user_tracks"][self._user.id][id_]
+
+    def _hashes(self) -> list[tuple[str, str, str, str]]:
+        result = []
+
+        # См. vk_api/audio.py:VkAudio.get_iter
+        offset = 0
+        while True:
+            response = self._user._client._audio._vk.http.post(
+                "https://m.vk.com/audio",
+                data={
+                    "act": "load_section",
+                    "owner_id": self._user.id,
+                    "playlist_id": -1,
+                    "offset": offset,
+                    "type": "playlist",
+                    "access_hash": None,
+                    "is_loading_all": 1,
+                },
+                allow_redirects=False,
+            ).json()
+
+            if not response["data"][0]:
+                return []
+
+            result.extend(vk_api.audio.scrap_ids(response["data"][0]["list"]))
+
+            if response["data"][0]["hasMore"]:
+                offset += vk_api.audio.TRACKS_PER_USER_PAGE
+            else:
+                break
+
+        return result
 
 
 class VKontakteTrack(Show):
@@ -792,7 +862,7 @@ def main() -> None:
     database = Database(cache_file(pathlib.Path(".database")))
 
     def vkontakte_routine() -> None:
-        client = make_vkontakte_client(config)
+        client = make_vkontakte_client(config, cache_file(pathlib.Path(".vkontakte")))
         user = client.user()
         tracks = user.tracks
 
