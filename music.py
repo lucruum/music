@@ -2,6 +2,8 @@ from typing import Any, Iterator, Optional, Sequence
 import abc
 import atexit
 import contextlib
+import html
+import json
 import os
 import pathlib
 import pickle
@@ -406,8 +408,8 @@ class GeniusDatabaseTrack:
 
     @property
     def lyrics(self) -> str:
-        html = requests.get(self._lyrics_url).text
-        soup = bs4.BeautifulSoup(html, "html.parser")
+        html_ = requests.get(self._lyrics_url).text
+        soup = bs4.BeautifulSoup(html_, "html.parser")
 
         result = ""
         for it in soup.find_all("div", {"data-lyrics-container": "true"}, recursive=True):
@@ -510,6 +512,9 @@ class VKontakteClient:
         self._cache = cache
         self.id = str(info["id"])
 
+    def group(self, id_: str | int) -> "VKontakteGroup":
+        return VKontakteGroup(self, id_)
+
     def user(self, id_: str | int | None = None) -> "VKontakteUser":
         return VKontakteUser(self, id_)
 
@@ -532,6 +537,22 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
             password = input(f"{login.split('@')[0]}'s password: ")
 
 
+class VKontakteGroup(Show):
+    def __init__(self, client: VKontakteClient, id_: str | int):
+        info = client._api.groups.get_by_id(group_id=id_)[0]
+
+        self._client = client
+        self.id = str(info["id"])
+        self.name = str(info["name"])
+
+    def show(self) -> str:
+        return self.name
+
+    @property
+    def wall(self) -> "VKontakteWall":
+        return VKontakteWall(self._client, f"-{self.id}")
+
+
 class VKontakteUser(Show):
     def __init__(self, client: VKontakteClient, id_: str | int | None):
         info = client._api.users.get(user_ids=id_)[0]
@@ -546,6 +567,10 @@ class VKontakteUser(Show):
     @property
     def tracks(self) -> list["VKontakteTrack"]:
         return list(_VKontakteUserTracks(self))
+
+    @property
+    def wall(self) -> "VKontakteWall":
+        return VKontakteWall(self._client, self.id)
 
 
 class _VKontakteUserTracks:
@@ -616,6 +641,57 @@ class _VKontakteUserTracks:
         return result
 
 
+class VKontakteWall:
+    def __init__(self, client: VKontakteClient, owner_id: str):
+        self._client = client
+        self.owner_id = owner_id
+
+    @property
+    def posts(self) -> list["VKontaktePost"]:
+        result: list[VKontaktePost] = []
+        n_posts = self._client._api.wall.get(owner_id=self.owner_id)["count"]
+
+        with tqdm.tqdm(
+            ascii=".:",
+            desc="Fetching posts",
+            total=n_posts,
+        ) as bar:
+            for i in range(0, n_posts, 100):
+                for it in self._client._api.wall.get(owner_id=self.owner_id, count=100, offset=i)["items"]:
+                    result.append(VKontaktePost(self._client, it))
+                bar.update(bar.n + 100 <= bar.total and 100 or bar.total - bar.n)
+
+        return result
+
+
+class VKontaktePost(Show):
+    def __init__(self, client: VKontakteClient, impl: dict[str, Any]):
+        self._client = client
+        self.id = str(impl["id"])
+        self.owner_id = str(impl["owner_id"])
+
+    def show(self) -> str:
+        return f"https://vk.com/wall{self.owner_id}_{self.id}"
+
+    @property
+    def tracks(self) -> list["VKontakteAttachedTrack"]:
+        result = []
+        response = self._client._audio._vk.http.get(f"https://m.vk.com/wall{self.owner_id}_{self.id}")
+        html_ = response.text
+        soup = bs4.BeautifulSoup(html_, "html.parser")
+
+        for it in soup.select("button[data-audio]"):
+            assert isinstance(it["data-audio"], str)
+
+            impl = json.loads(it["data-audio"])
+            for key, value in impl.items():
+                impl[key] = html.unescape(str(value))
+
+            result.append(VKontakteAttachedTrack(impl))
+
+        return result
+
+
 class VKontakteTrack(Show):
     def __init__(self, impl: dict[str, Any]):
         # Обложки отсортированы по возрастанию расширения
@@ -664,6 +740,15 @@ class VKontakteTrack(Show):
                         notifier(data)
                     elif process.poll() is not None:
                         break
+
+
+class VKontakteAttachedTrack(VKontakteTrack):
+    def __init__(self, impl: dict[str, Any]):
+        self._cover_url = impl["coverUrl"] is not None and str(impl["coverUrl"]) or ""
+        self._url = str(impl["url"])
+        self.artists = str(impl["artist"])
+        self.id = f"{impl['owner_id']}{impl['id']}"
+        self.title = str(impl["title"])
 
 
 #
