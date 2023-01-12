@@ -675,6 +675,9 @@ class VKontaktePost(Show):
 
     @property
     def tracks(self) -> list["VKontakteAttachedTrack"]:
+        if self.id in self._client._cache["post_tracks"][self.owner_id]:
+            return self._client._cache["post_tracks"][self.owner_id][self.id]  # type: ignore[no-any-return]
+
         result = []
         response = self._client._audio._vk.http.get(f"https://m.vk.com/wall{self.owner_id}_{self.id}")
         html_ = response.text
@@ -689,6 +692,7 @@ class VKontaktePost(Show):
 
             result.append(VKontakteAttachedTrack(impl))
 
+        self._client._cache["post_tracks"][self.owner_id][self.id] = result
         return result
 
 
