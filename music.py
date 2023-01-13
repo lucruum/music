@@ -969,4 +969,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import pdb
+
+    try:
+        main()
+    except Exception:
+        pdb.post_mortem()
