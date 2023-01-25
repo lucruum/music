@@ -10,6 +10,7 @@ import pickle
 import re
 import subprocess
 import tempfile
+import traceback
 import uuid
 import warnings
 
@@ -974,4 +975,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
+        print(traceback.format_exc())
         pdb.post_mortem()
