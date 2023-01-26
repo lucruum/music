@@ -2,7 +2,7 @@ set command= ^
     cls ^& ^
     black music.py --line-length=120 ^& ^
     flake8 music.py --max-line-length=120 ^& ^
-    mypy music.py --strict ^& ^
+    mypy music.py --pretty --show-error-context --strict ^& ^
     python -m doctest music.py ^& ^
     python music.py
 
