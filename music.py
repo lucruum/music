@@ -2,6 +2,7 @@ from typing import Any, Iterator, Optional, Sequence
 import abc
 import atexit
 import contextlib
+import functools
 import html
 import json
 import os
@@ -183,6 +184,7 @@ def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
 #
 
 
+@functools.cache  # Для идентичности объектов кэша при повторном вызове
 def cache_file(path: pathlib.Path) -> AutovivificiousDict:
     """
     Кэш-файл, представляемый автоматически оживляемым словарём (см. `AutovivificiousDict`)
