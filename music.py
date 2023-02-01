@@ -481,7 +481,7 @@ class YouTubeMusicDatabaseTrack:
     def __init__(self, impl: dict[str, Any]):
         self._cover_url = str(impl["thumbnails"][0]["url"]).replace("w60-h60", "w600-h600")
         self._video_id = str(impl["videoId"])
-        self.album = str(impl["album"]["name"])
+        self.album = str(impl["album"]["name"]) if impl["album"] is not None else ""
         self.artists = ", ".join(it["name"] for it in impl["artists"])
         self.title = str(impl["title"])
 
