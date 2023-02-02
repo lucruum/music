@@ -1,4 +1,5 @@
-from typing import Any, Iterator, Optional, Sequence
+from types import TracebackType
+from typing import Any, Iterator, Optional, Sequence, Type
 import abc
 import atexit
 import contextlib
@@ -140,12 +141,47 @@ def markup(s: str) -> str:
     return s
 
 
-def write(*objs: Any, end: str = "\n", flush: bool = True, sep: str = " ") -> None:
-    """Стилизованный вывод"""
+def swrite(*objs: Any, sep: str = " ") -> str:
+    """Стилизованный вывод в строку"""
     output = sep.join(map(str, objs))
     output = markup(output)
     output = fit(output, os.get_terminal_size()[0], f"{colorama.Style.RESET_ALL}…")
-    print(output, end=end, flush=flush)
+    return output
+
+
+def write(*objs: Any, end: str = "\n", sep: str = " ") -> None:
+    """Стилизованный вывод"""
+    output = swrite(*objs, sep=sep)
+    # Вывод сообщения без перекрытия tqdm-бара
+    tqdm.tqdm.write(output, end=end)
+
+
+class Status:
+    def __init__(self, message: str, leave: bool = True):
+        # Реализуем через tqmd для корректного вывода вложенных `write`'ов, `Status`'ов и tqdm-баров
+        self._bar = tqdm.tqdm([0], bar_format=swrite(f"{message}..."), leave=leave)
+        self._is_failed = False
+        self._message = message
+
+    def __enter__(self) -> "Status":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        if not self._is_failed:
+            if exc_type is None:
+                self._bar.bar_format = swrite(f"{self._message}, done")
+            else:
+                self._bar.bar_format = swrite(f"{self._message}, failed")
+            self._bar.close()
+
+    def fail(self, cause: str = "") -> None:
+        self._bar.bar_format = swrite(f"{self._message}, failed" + (cause and f": {cause}" or ""))
+        self._bar.close()
 
 
 #
@@ -508,10 +544,23 @@ class YouTubeMusicDatabaseTrack:
 
 class VKontakteClient:
     def __init__(self, login: str, password: str, cache: AutovivificiousDict):
+        __captcha_handler_calls = 0
+
+        def captcha_handler(captcha: vk_api.exceptions.Captcha) -> None:
+            nonlocal __captcha_handler_calls
+
+            # `__init__` вызывается из-под `status`'а, поэтому перед первым `input`'ом вызываем `print()`,
+            # чтобы подсказка выводилась на новой строке
+            if __captcha_handler_calls == 0:
+                print()
+            __captcha_handler_calls += 1
+
+            captcha.try_again(input(f"Enter symbols from the picture {captcha.get_url()}: "))
+
         session = vk_api.VkApi(
             login,
             password,
-            captcha_handler=lambda x: x.try_again(input(f"Enter symbols from the picture {x.get_url()}: ")),
+            captcha_handler=captcha_handler,
         )
         session.auth()
 
@@ -538,13 +587,14 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
         password = input(f"{login.split('@')[0]}'s password: ")
 
     while True:
-        try:
+        with Status(f"Logging in to {login}") as status:
             config["vkontakte"]["credentials"] = (login, password)
-            return VKontakteClient(login, password, cache)
-        except vk_api.exceptions.BadPassword:
-            write("Invalid login or password")
-            login = input("VKontakte login: ")
-            password = input(f"{login.split('@')[0]}'s password: ")
+            try:
+                return VKontakteClient(login, password, cache)
+            except vk_api.exceptions.BadPassword:
+                status.fail("invalid login or password")
+                login = input("VKontakte login: ")
+                password = input(f"{login.split('@')[0]}'s password: ")
 
 
 class VKontakteGroup(Show):
@@ -791,13 +841,14 @@ def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
         password = input(f"{login.split('@')[0]}'s password: ")
 
     while True:
-        try:
+        with Status(f"Logging in to {login}") as status:
             config["yandex_music"]["credentials"] = (login, password)
-            return YandexMusicClient(login, password)
-        except yandex_music.exceptions.BadRequest:
-            write("Invalid login or password")
-            login = input("Yandex Music login: ")
-            password = input(f"{login.split('@')[0]}'s password: ")
+            try:
+                return YandexMusicClient(login, password)
+            except yandex_music.exceptions.BadRequest:
+                status.fail("invalid login or password")
+                login = input("Yandex Music login: ")
+                password = input(f"{login.split('@')[0]}'s password: ")
 
 
 class YandexMusicUser(Show):
@@ -942,9 +993,8 @@ def sync(
             write(f"[*{i + 1}*/*{len(missing_tracks)}*] Downloading `{it}`")
             with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
                 it.download(tmp_path)
-                write("Embedding metadata...", flush=True, end="")
-                it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
-                write("\b\b\b, done")
+                with Status("Embedding metadata"):
+                    it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
 
     remove_extraneous_tracks()
     arrange_files()
