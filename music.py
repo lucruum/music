@@ -3,7 +3,9 @@ from typing import Any, Iterator, Optional, Sequence, Type
 import abc
 import atexit
 import contextlib
+import difflib
 import functools
+import hashlib
 import html
 import json
 import os
@@ -19,6 +21,7 @@ import warnings
 import bs4
 import colorama
 import ffpb  # type: ignore[import]
+import fp.fp  # type: ignore[import]
 import mutagen.id3
 import requests
 import tqdm
@@ -216,6 +219,50 @@ def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
 
 
 #
+# Сеть
+#
+
+
+__proxy = ""
+
+
+def proxy() -> str:
+    """Адрес прокси-сервера"""
+    if not __proxy:
+        next_proxy()
+
+    return __proxy
+
+
+def next_proxy() -> None:
+    """Получение нового адреса прокси-сервера"""
+    global __proxy
+
+    while True:
+        # Элитные прокси-сервера реже отваливаются
+        # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
+        with Status("Searching for proxy server", leave=False):
+            __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
+
+        with Status(f"Trying to connect to `{__proxy}`", leave=False) as status:
+            # Проверка ответа сервера
+            try:
+                response = requests.get(
+                    "https://f4.bcbits.com/img/a1056493284_10.jpg",
+                    proxies={"https": __proxy},
+                    timeout=5,
+                )
+
+                actual_hashsum = hashlib.sha256(response.content).hexdigest()
+                expected_hashsum = "f9e2c765115cfc602faace1485f86c3507d8e246471cf126dcd0b647df04368f"
+                if actual_hashsum == expected_hashsum:
+                    return
+                status.fail("invalid server response")
+            except requests.exceptions.RequestException as e:
+                status.fail(str(e))
+
+
+#
 # Кэширование
 #
 
@@ -252,7 +299,7 @@ def cache_file(path: pathlib.Path) -> AutovivificiousDict:
 
 class Database:
     def __init__(self, cache: AutovivificiousDict) -> None:
-        self._cache = cache
+        self._bandcamp_database = BandcampDatabase(cache)
         self._genius_database = GeniusDatabase(cache)
         self._youtube_music_database = YouTubeMusicDatabase(cache)
 
@@ -292,6 +339,9 @@ class DatabaseTrack:
 
     @property
     def album(self) -> str:
+        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
+            if bandcamp_found.album:
+                return bandcamp_found.album
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.album:
                 return youtube_found.album
@@ -302,6 +352,9 @@ class DatabaseTrack:
 
     @property
     def artists(self) -> str:
+        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
+            if bandcamp_found.artists:
+                return bandcamp_found.artists
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.artists:
                 return youtube_found.artists
@@ -312,6 +365,9 @@ class DatabaseTrack:
 
     @property
     def cover(self) -> bytes:
+        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
+            if bandcamp_found.cover:
+                return bandcamp_found.cover
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.cover:
                 return youtube_found.cover
@@ -332,6 +388,9 @@ class DatabaseTrack:
 
     @property
     def title(self) -> str:
+        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
+            if bandcamp_found.title:
+                return bandcamp_found.title
         if youtube_found := self._database._youtube_music_database.search_track(self._query):
             if youtube_found.title:
                 return youtube_found.title
@@ -339,6 +398,76 @@ class DatabaseTrack:
             if genius_found.title:
                 return genius_found.title
         return ""
+
+
+class BandcampDatabase:
+    def __init__(self, cache: AutovivificiousDict):
+        self._cache = cache
+
+    def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
+        if query in self._cache["bandcamp"]["tracks"]:
+            if self._cache["bandcamp"]["tracks"][query] is not None:
+                return self._cache["bandcamp"]["tracks"][query]  # type: ignore[no-any-return]
+            return None
+
+        response = requests.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
+        html_ = response.text
+        soup = bs4.BeautifulSoup(html_, "html.parser")
+
+        # Лучшее совпадение не всегда находится на первом месте
+        # К примеру, "Boards of Canada - Pete Standing Alone" в поисковой выдаче лишь пятый,
+        # в то время как на первых четырёх позициях мэшапы
+        matches: dict[str, dict[str, str]] = {}
+
+        for it in soup.find_all("li", class_="searchresult"):
+            artists = it.find("div", class_="subhead").get_text().splitlines()[-2].strip().removeprefix("by ")
+            album = it.find("div", class_="subhead").get_text().splitlines()[-4].strip().removeprefix("from ")
+            title = it.find("div", class_="heading").a.get_text().strip()
+            url = it.find("div", class_="heading").a["href"]
+
+            matches[f"{artists} - {title}"] = {
+                "artists": artists,
+                "album": album,
+                "title": title,
+                "url": url,
+            }
+
+        if not matches:
+            self._cache["bandcamp"]["tracks"][query] = None
+            return None
+
+        if closest_matches := difflib.get_close_matches(query, matches, n=1):
+            track = BandcampDatabaseTrack(**matches[closest_matches[0]])
+            self._cache["bandcamp"]["tracks"][query] = track
+            return track
+
+        self._cache["bandcamp"]["tracks"][query] = None
+        return None
+
+
+class BandcampDatabaseTrack:
+    def __init__(self, artists: str, album: str, title: str, url: str):
+        self._url = url
+        self.album = album
+        self.artists = artists
+        self.title = title
+
+    @property
+    def cover(self) -> bytes:
+        response = requests.get(self._url)
+        html_ = response.text
+        soup = bs4.BeautifulSoup(html_, "html.parser")
+
+        popup_image = soup.find("a", class_="popupImage")
+        assert isinstance(popup_image, bs4.Tag)
+        cover_url = popup_image["href"]
+        assert isinstance(cover_url, str)
+
+        while True:
+            try:
+                return requests.get(cover_url, proxies={"https": proxy()}).content
+            except requests.exceptions.RequestException:
+                next_proxy()
 
 
 class GeniusDatabase:

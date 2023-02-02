@@ -1,6 +1,7 @@
 bs4
 colorama
 ffpb
+free_proxy
 mutagen
 requests
 tqdm
