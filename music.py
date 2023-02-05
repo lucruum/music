@@ -1,5 +1,21 @@
 from types import TracebackType
-from typing import Any, Iterator, Optional, Sequence, Type
+from typing import (
+    Any,
+    Iterable,
+    Iterator,
+    Mapping,
+    NoReturn,
+    Optional,
+    overload,
+    Sequence,
+    TYPE_CHECKING,
+    Type,
+    TypeVar,
+)
+
+if TYPE_CHECKING:
+    from _typeshed import SupportsWrite
+
 import abc
 import atexit
 import contextlib
@@ -29,6 +45,15 @@ import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
 import ytmusicapi  # type: ignore[import]
+
+
+#
+# Типы
+#
+
+
+if TYPE_CHECKING:
+    T = TypeVar("T")
 
 
 #
@@ -152,21 +177,36 @@ def swrite(*objs: Any, sep: str = " ") -> str:
     return output
 
 
-def write(*objs: Any, end: str = "\n", sep: str = " ") -> None:
+def write(*objs: Any, end: str = "\n", flush: bool = False, sep: str = " ") -> None:
     """Стилизованный вывод"""
-    output = swrite(*objs, sep=sep)
-    # Вывод сообщения без перекрытия tqdm-бара
-    tqdm.tqdm.write(output, end=end)
+    print(swrite(*objs, sep=sep), end=end, flush=flush)
 
 
 class Status:
-    def __init__(self, message: str, leave: bool = True):
-        # Реализуем через tqmd для корректного вывода вложенных `write`'ов, `Status`'ов и tqdm-баров
-        self._bar = tqdm.tqdm([0], bar_format=swrite(f"{message}..."), leave=leave)
+    """Индикатор состояния с анимацией"""
+
+    def __init__(self, message: str):
+        self.__message = message
+        self.__postfix = ""
         self._is_failed = False
-        self._message = message
+
+    def set_message(self, s: str) -> None:
+        self.__message = s
+        self.render()
+
+    def set_postfix(self, s: str) -> None:
+        self.__postfix = s
+        self.render()
 
     def __enter__(self) -> "Status":
+        self.__postfix = "..."
+
+        output = swrite(f"{self.__message}{self.__postfix}")
+        # См. комментарий в `render`'е
+        padding = " " * (os.get_terminal_size()[0] - visual_length(output))
+        # Не делаем возврата каретки, чтобы не перетереть внешний `Status`
+        print(f"{output}{padding}", end="", flush=True)
+
         return self
 
     def __exit__(
@@ -176,15 +216,154 @@ class Status:
         exc_tb: Optional[TracebackType],
     ) -> None:
         if not self._is_failed:
-            if exc_type is None:
-                self._bar.bar_format = swrite(f"{self._message}, done")
-            else:
-                self._bar.bar_format = swrite(f"{self._message}, failed")
-            self._bar.close()
+            self.set_postfix(", done" if exc_type is None else ", failed")
+            write()
+        else:
+            # Сообщение об ошибке было выведено `fail`'ом - ничего не делаем
+            pass
 
     def fail(self, cause: str = "") -> None:
-        self._bar.bar_format = swrite(f"{self._message}, failed" + (cause and f": {cause}" or ""))
-        self._bar.close()
+        self._is_failed = True
+        self.set_postfix(", failed" + (cause and f": {cause}" or ""))
+
+    def render(self) -> None:
+        output = swrite(f"{self.__message}{self.__postfix}")
+        # Благодаря `padding`'у вложенные `Status`'ы и `write`'ы будут выводиться на новой строчке
+        # без явного вызова перевода строки
+        padding = " " * (os.get_terminal_size()[0] - visual_length(output))
+        print(f"\r{output}{padding}", end="", flush=True)
+
+
+if TYPE_CHECKING:
+
+    @overload
+    def mytqdm(
+        iterable: Iterable[T],
+        desc: str | None = ...,
+        total: float | None = ...,
+        leave: bool | None = ...,
+        file: SupportsWrite[str] | None = ...,
+        ncols: int | None = ...,
+        mininterval: float = ...,
+        maxinterval: float = ...,
+        miniters: float | None = ...,
+        ascii: bool | str | None = ...,
+        disable: bool | None = ...,
+        unit: str = ...,
+        unit_scale: bool | float = ...,
+        dynamic_ncols: bool = ...,
+        smoothing: float = ...,
+        bar_format: str | None = ...,
+        initial: float = ...,
+        position: int | None = ...,
+        postfix: Mapping[str, object] | str | None = ...,
+        unit_divisor: float = ...,
+        write_bytes: bool | None = ...,
+        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
+        nrows: int | None = ...,
+        colour: str | None = ...,
+        delay: float | None = ...,
+        gui: bool = ...,
+        **kwargs: dict[str, Any],
+    ) -> tqdm.tqdm[T]:
+        ...
+
+    @overload
+    def mytqdm(
+        iterable: None = ...,
+        desc: str | None = ...,
+        total: float | None = ...,
+        leave: bool | None = ...,
+        file: SupportsWrite[str] | None = ...,
+        ncols: int | None = ...,
+        mininterval: float = ...,
+        maxinterval: float = ...,
+        miniters: float | None = ...,
+        ascii: bool | str | None = ...,
+        disable: bool | None = ...,
+        unit: str = ...,
+        unit_scale: bool | float = ...,
+        dynamic_ncols: bool = ...,
+        smoothing: float = ...,
+        bar_format: str | None = ...,
+        initial: float = ...,
+        position: int | None = ...,
+        postfix: Mapping[str, object] | str | None = ...,
+        unit_divisor: float = ...,
+        write_bytes: bool | None = ...,
+        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
+        nrows: int | None = ...,
+        colour: str | None = ...,
+        delay: float | None = ...,
+        gui: bool = ...,
+        **kwargs: dict[str, Any],
+    ) -> tqdm.tqdm[NoReturn]:
+        ...
+
+    def mytqdm(
+        iterable: Iterable[T] | None = ...,
+        desc: str | None = ...,
+        total: float | None = ...,
+        leave: bool | None = ...,
+        file: SupportsWrite[str] | None = ...,
+        ncols: int | None = ...,
+        mininterval: float = ...,
+        maxinterval: float = ...,
+        miniters: float | None = ...,
+        ascii: bool | str | None = ...,
+        disable: bool | None = ...,
+        unit: str = ...,
+        unit_scale: bool | float = ...,
+        dynamic_ncols: bool = ...,
+        smoothing: float = ...,
+        bar_format: str | None = ...,
+        initial: float = ...,
+        position: int | None = ...,
+        postfix: Mapping[str, object] | str | None = ...,
+        unit_divisor: float = ...,
+        write_bytes: bool | None = ...,
+        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
+        nrows: int | None = ...,
+        colour: str | None = ...,
+        delay: float | None = ...,
+        gui: bool = ...,
+        **kwargs: dict[str, Any],
+    ) -> tqdm.tqdm[T | NoReturn]:
+        ...
+
+else:
+
+    def mytqdm(*args, **kwargs):
+        """
+        На Windows tqdm некорректно определяет ширину бара при `ncols=None`: возвращается значение,
+        меньшее ожидаемого на 1, из-за чего
+
+            for it in tqdm.tqdm(...):
+                if ...:
+                    print("Go bananas")
+
+        выводит
+
+            Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]G
+            o bananas
+
+        В то время как на Linux
+
+            Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]
+            Go bananas
+
+        tqdm вычисляет ширину терминала как разницу координат правой и левой сторон:
+            https://github.com/tqdm/tqdm/blob/6791e8c5b3d6c30bdd2060c346996bfb5a6f10d1/tqdm/utils.py#L264
+            https://learn.microsoft.com/en-us/windows/console/console-screen-buffer-info-str, см. srWindow
+
+        Для сравнения, в CPython ширина определяется как разница координат плюс 1:
+            https://github.com/python/cpython/blob/5a2b984568f72f0d7ff7c7b4ee8ce31af9fd1b7e/Modules/posixmodule.c#L13473
+        """
+        if len(args) >= 6 and args[5] is None:
+            args[5] = os.get_terminal_size()[0]
+        if "ncols" not in kwargs or kwargs["ncols"] is None:
+            kwargs["ncols"] = os.get_terminal_size()[0]
+        return tqdm.tqdm(*args, **kwargs)
 
 
 #
@@ -241,10 +420,10 @@ def next_proxy() -> None:
     while True:
         # Элитные прокси-сервера реже отваливаются
         # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
-        with Status("Searching for proxy server", leave=False):
+        with Status("Searching for proxy server"):
             __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
 
-        with Status(f"Trying to connect to `{__proxy}`", leave=False) as status:
+        with Status(f"Trying to connect to `{__proxy}`") as status:
             # Проверка ответа сервера
             try:
                 response = requests.get(
@@ -673,23 +852,10 @@ class YouTubeMusicDatabaseTrack:
 
 class VKontakteClient:
     def __init__(self, login: str, password: str, cache: AutovivificiousDict):
-        __captcha_handler_calls = 0
-
-        def captcha_handler(captcha: vk_api.exceptions.Captcha) -> None:
-            nonlocal __captcha_handler_calls
-
-            # `__init__` вызывается из-под `status`'а, поэтому перед первым `input`'ом вызываем `print()`,
-            # чтобы подсказка выводилась на новой строке
-            if __captcha_handler_calls == 0:
-                print()
-            __captcha_handler_calls += 1
-
-            captcha.try_again(input(f"Enter symbols from the picture {captcha.get_url()}: "))
-
         session = vk_api.VkApi(
             login,
             password,
-            captcha_handler=captcha_handler,
+            captcha_handler=lambda x: x.try_again(input(f"Enter symbols from the picture {x.get_url()}: ")),
         )
         session.auth()
 
@@ -778,7 +944,7 @@ class _VKontakteUserTracks:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
 
-            for wrappee in tqdm.tqdm(
+            for wrappee in mytqdm(
                 vk_api.audio.scrap_tracks(
                     missing_hashes,
                     int(self._user._client.id),
@@ -840,7 +1006,7 @@ class VKontakteWall:
         result: list[VKontaktePost] = []
         n_posts = self._client._api.wall.get(owner_id=self.owner_id)["count"]
 
-        with tqdm.tqdm(
+        with mytqdm(
             ascii=".:",
             desc="Fetching posts",
             total=n_posts,
@@ -919,7 +1085,13 @@ class VKontakteTrack(Show):
             def __init__(self, **kwargs: dict[str, Any]):
                 assert isinstance(kwargs["total"], int)
 
-                super().__init__(ascii=".:", desc="Receiving track", total=kwargs["total"])
+                super().__init__(
+                    ascii=".:",
+                    desc="Receiving track",
+                    # См. комментарий к `mytqdm`
+                    ncols=os.get_terminal_size()[0],
+                    total=kwargs["total"],
+                )
 
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
             process = subprocess.Popen(
@@ -1050,7 +1222,7 @@ class YandexMusicTrack(Show):
         response = requests.get(url, stream=True)
         length = int(response.headers["content-length"])
 
-        with tqdm.tqdm(
+        with mytqdm(
             ascii=".:",
             desc="Receiving track",
             total=length,
