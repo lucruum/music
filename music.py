@@ -30,6 +30,7 @@ import pickle
 import re
 import subprocess
 import tempfile
+import time
 import traceback
 import uuid
 import warnings
@@ -420,25 +421,56 @@ def next_proxy() -> None:
     while True:
         # Элитные прокси-сервера реже отваливаются
         # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
-        with Status("Searching for proxy server"):
-            __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
+        with Status("Searching for proxy server") as status:
+            try:
+                __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
+            except fp.fp.errors.FreeProxyException:
+                status.fail("not found")
+                continue
 
+        # Проверка ответа сервера
         with Status(f"Trying to connect to `{__proxy}`") as status:
-            # Проверка ответа сервера
             try:
                 response = requests.get(
                     "https://f4.bcbits.com/img/a1056493284_10.jpg",
                     proxies={"https": __proxy},
                     timeout=5,
                 )
-
                 actual_hashsum = hashlib.sha256(response.content).hexdigest()
                 expected_hashsum = "f9e2c765115cfc602faace1485f86c3507d8e246471cf126dcd0b647df04368f"
-                if actual_hashsum == expected_hashsum:
-                    return
-                status.fail("invalid server response")
+                if actual_hashsum != expected_hashsum:
+                    status.fail("invalid server response")
+                    continue
             except requests.exceptions.RequestException as e:
                 status.fail(str(e))
+                continue
+
+        # Проверка скорости соединения
+        with Status("Testing connection speed") as status:
+            try:
+                start = time.perf_counter()
+                response = requests.get(
+                    "http://ipv4.download.thinkbroadband.com:80/2MB.zip",
+                    proxies={"http": __proxy},
+                    stream=True,
+                )
+                length = int(response.headers["content-length"])
+                got = 0
+                for data in response.iter_content(1024):
+                    got += len(data)
+                    done = int((got / length) * 20)
+                    bar = f"[*{'=' * done}{' ' * (20 - done)}*]"
+                    speed = f"`{got / (time.perf_counter() - start) / 1024 ** 2:.2f}` MBps"
+                    status.set_message(f"Testing connection speed, {bar} {speed}")
+                if time.perf_counter() - start > 4:
+                    # Соединение медленнее 0.5 МБ/c
+                    status.fail("too slow")
+                    continue
+            except requests.exceptions.RequestException as e:
+                status.fail(str(e))
+                continue
+
+        return
 
 
 #
