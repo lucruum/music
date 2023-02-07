@@ -610,6 +610,19 @@ class DatabaseTrack:
                 return genius_found.title
         return ""
 
+    @property
+    def year(self) -> str:
+        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
+            if bandcamp_found.year:
+                return bandcamp_found.year
+        if youtube_found := self._database._youtube_music_database.search_track(self._query):
+            if youtube_found.year:
+                return youtube_found.year
+        if genius_found := self._database._genius_database.search_track(self._query):
+            if genius_found.year:
+                return genius_found.year
+        return ""
+
 
 class BandcampDatabase:
     def __init__(self, cache: AutovivificiousDict):
@@ -635,12 +648,14 @@ class BandcampDatabase:
             album = it.find("div", class_="subhead").get_text().splitlines()[-4].strip().removeprefix("from ")
             title = it.find("div", class_="heading").a.get_text().strip()
             url = it.find("div", class_="heading").a["href"]
+            year = it.find("div", class_="released").get_text().split()[-1]
 
             matches[f"{artists} - {title}"] = {
                 "artists": artists,
                 "album": album,
                 "title": title,
                 "url": url,
+                "year": year,
             }
 
         if not matches:
@@ -657,11 +672,12 @@ class BandcampDatabase:
 
 
 class BandcampDatabaseTrack:
-    def __init__(self, artists: str, album: str, title: str, url: str):
+    def __init__(self, artists: str, album: str, title: str, url: str, year: str):
         self._url = url
         self.album = album
         self.artists = artists
         self.title = title
+        self.year = year
 
     @property
     def cover(self) -> bytes:
@@ -749,6 +765,7 @@ class GeniusDatabaseTrack:
         self._lyrics_url = str(impl["url"])
         self.artists = GeniusDatabaseTrack._strip_translation(impl["primary_artist"]["name"])
         self.title = GeniusDatabaseTrack._strip_translation(impl["title"])
+        self.year = str(impl["release_date_components"]["year"]) if impl["release_date_components"] is not None else ""
 
     @staticmethod
     def _strip_translation(s: str) -> str:
@@ -858,7 +875,7 @@ class YouTubeMusicDatabase:
 class YouTubeMusicDatabaseTrack:
     def __init__(self, impl: dict[str, Any]):
         self._cover_url = str(impl["thumbnails"][0]["url"]).replace("w60-h60", "w600-h600")
-        self._video_id = str(impl["videoId"])
+        self._playlist = YouTubeMusicDatabase._IMPL.get_watch_playlist(impl["videoId"], limit=1)
         self.album = str(impl["album"]["name"]) if impl["album"] is not None else ""
         self.artists = ", ".join(it["name"] for it in impl["artists"])
         self.title = str(impl["title"])
@@ -870,11 +887,14 @@ class YouTubeMusicDatabaseTrack:
     @property
     def lyrics(self) -> str:
         try:
-            playlist = YouTubeMusicDatabase._IMPL.get_watch_playlist(self._video_id, limit=1)
-            result = YouTubeMusicDatabase._IMPL.get_lyrics(playlist["lyrics"])["lyrics"]
+            result = YouTubeMusicDatabase._IMPL.get_lyrics(self._playlist["lyrics"])["lyrics"]
             return result is not None and str(result) or ""
         except Exception:
             return ""
+
+    @property
+    def year(self) -> str:
+        return str(self._playlist["tracks"][0].get("year", ""))
 
 
 #
@@ -1110,6 +1130,7 @@ class VKontakteTrack(Show):
             cover=suggestion.cover or self.cover,
             lyrics=suggestion.lyrics,
             title=self.title,
+            year=suggestion.year,
         )
 
     def download(self, path: pathlib.Path) -> None:
@@ -1240,6 +1261,12 @@ class YandexMusicTrack(Show):
     def title(self) -> str:
         return self._impl.title or ""
 
+    @property
+    def year(self) -> str:
+        if albums := self._impl.albums:
+            return str(albums[0].year) or ""
+        return ""
+
     def saturated_metadata(self, suggestion: DatabaseTrack) -> "TrackMetadata":
         return TrackMetadata(
             album=self.album,
@@ -1247,6 +1274,7 @@ class YandexMusicTrack(Show):
             cover=self.cover,
             lyrics=self.lyrics or suggestion.lyrics,
             title=self.title,
+            year=self.year,
         )
 
     def download(self, path: pathlib.Path) -> None:
@@ -1273,12 +1301,13 @@ class YandexMusicTrack(Show):
 
 
 class TrackMetadata:
-    def __init__(self, *, album: str, artists: str, cover: bytes, lyrics: str, title: str):
+    def __init__(self, *, album: str, artists: str, cover: bytes, lyrics: str, title: str, year: str):
         self.album = album
         self.artists = artists
         self.cover = cover
         self.lyrics = lyrics
         self.title = title
+        self.year = year
 
     def embed(self, path: pathlib.Path) -> None:
         tags = mutagen.id3.ID3()  # type: ignore[no-untyped-call]
@@ -1287,6 +1316,7 @@ class TrackMetadata:
         tags["APIC"] = mutagen.id3.APIC(data=self.cover)  # type: ignore[attr-defined]
         tags["USLT"] = mutagen.id3.USLT(text=self.lyrics)  # type: ignore[attr-defined]
         tags["TIT2"] = mutagen.id3.TIT2(text=self.title)  # type: ignore[attr-defined]
+        tags["TDRC"] = mutagen.id3.TDRC(text=self.year)  # type: ignore[attr-defined]
         tags.save(path)
 
 
