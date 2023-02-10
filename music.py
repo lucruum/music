@@ -1,4 +1,4 @@
-from types import TracebackType
+from types import NoneType, TracebackType
 from typing import (
     Any,
     Iterable,
@@ -545,82 +545,114 @@ class Database:
 
 class DatabaseTrack:
     def __init__(self, database: Database, query: str):
+        # Доверие к результатам выдачи базы данных
+        database_trust = {
+            YouTubeMusicDatabaseTrack: 3,
+            BandcampDatabaseTrack: 2,
+            GeniusDatabaseTrack: 1,
+            NoneType: 0,
+        }
+
         self._database = database
         self._query = query
 
+        self._matches = [
+            self._database._bandcamp_database.search_track(self._query),
+            self._database._genius_database.search_track(self._query),
+            self._database._youtube_music_database.search_track(self._query),
+        ]
+        self._matches.sort(
+            # Возвращаем кортеж, чтобы выдачи сравнивались по `database_trust`
+            # в случае одинаковых коэффициентов `_query_ratio`
+            key=lambda x: (
+                DatabaseTrack._query_ratio(query, f"{x.artists} - {x.title}".lower()) if x is not None else 0,
+                database_trust[type(x)],
+            ),
+            reverse=True,
+        )
+
+    @staticmethod
+    def _query_ratio(query: str, found: str) -> float:
+        """
+        Возвращает меру сходства запроса и найденного трека
+
+        Игнорирует порядок, в котором указаны исполнители и название песни, чтобы не получать каверы там,
+        где есть возможность получить оригинальный трек:
+
+        >>> def dummy_query_ratio(query, found):
+        ...     '''Реализация `DatabaseTrack._query_ratio` без игнорирования порядка'''
+        ...     return difflib.SequenceMatcher(a=query, b=found).ratio()
+        >>>
+        >>> query = 'Idioteque - Radiohead'
+        >>> bandcamp_found = 'Vlantis - Idioteque (Radiohead)'
+        >>> youtube_music_found = 'Radiohead - Idioteque'
+        >>>
+        >>> # Сравнение "глупым" `_query_ratio`:
+        >>> # `bandcamp_found` вернул большее число, поэтому метаданные будут браться с кавера
+        >>> dummy_query_ratio(query, bandcamp_found)
+        0.7307692307692307
+        >>> dummy_query_ratio(query, youtube_music_found)
+        0.42857142857142855
+        >>>
+        >>> # Сравнение "умным" `_query_ratio`:
+        >>> # `youtube_music_found` вернул большее число, так что метаданные будут браться с оригинального трека
+        >>> DatabaseTrack._query_ratio(query, bandcamp_found)
+        0.425
+        >>> DatabaseTrack._query_ratio(query, youtube_music_found)
+        1.0
+        """
+
+        query = query.lower()
+        found = found.lower()
+
+        artists_artists_ratio = difflib.SequenceMatcher(a=query.split(" - ")[0], b=found.split(" - ")[0]).ratio()
+        title_title_ratio = difflib.SequenceMatcher(a=query.split(" - ")[1], b=found.split(" - ")[1]).ratio()
+
+        artists_title_ratio = difflib.SequenceMatcher(a=query.split(" - ")[0], b=found.split(" - ")[1]).ratio()
+        title_artists_ratio = difflib.SequenceMatcher(a=query.split(" - ")[1], b=found.split(" - ")[0]).ratio()
+
+        return max(artists_artists_ratio + title_title_ratio, artists_title_ratio + title_artists_ratio) / 2
+
     @property
     def album(self) -> str:
-        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
-            if bandcamp_found.album:
-                return bandcamp_found.album
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.album:
-                return youtube_found.album
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.album:
-                return genius_found.album
+        for it in self._matches:
+            if it is not None and it.album:
+                return it.album
         return ""
 
     @property
     def artists(self) -> str:
-        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
-            if bandcamp_found.artists:
-                return bandcamp_found.artists
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.artists:
-                return youtube_found.artists
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.artists:
-                return genius_found.artists
+        for it in self._matches:
+            if it is not None and it.artists:
+                return it.artists
         return ""
 
     @property
     def cover(self) -> bytes:
-        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
-            if bandcamp_found.cover:
-                return bandcamp_found.cover
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.cover:
-                return youtube_found.cover
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.cover:
-                return genius_found.cover
+        for it in self._matches:
+            if it is not None and it.cover:
+                return it.cover
         return b""
 
     @property
     def lyrics(self) -> str:
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.lyrics:
-                return youtube_found.lyrics
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.lyrics:
-                return genius_found.lyrics
+        for it in self._matches:
+            if it is not None and it.lyrics:
+                return it.lyrics
         return ""
 
     @property
     def title(self) -> str:
-        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
-            if bandcamp_found.title:
-                return bandcamp_found.title
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.title:
-                return youtube_found.title
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.title:
-                return genius_found.title
+        for it in self._matches:
+            if it is not None and it.title:
+                return it.title
         return ""
 
     @property
     def year(self) -> str:
-        if bandcamp_found := self._database._bandcamp_database.search_track(self._query):
-            if bandcamp_found.year:
-                return bandcamp_found.year
-        if youtube_found := self._database._youtube_music_database.search_track(self._query):
-            if youtube_found.year:
-                return youtube_found.year
-        if genius_found := self._database._genius_database.search_track(self._query):
-            if genius_found.year:
-                return genius_found.year
+        for it in self._matches:
+            if it is not None and it.year:
+                return it.year
         return ""
 
 
@@ -676,6 +708,8 @@ class BandcampDatabaseTrack:
         self._url = url
         self.album = album
         self.artists = artists
+        # Bandcamp не предоставляет текстов песен
+        self.lyrics = ""
         self.title = title
         self.year = year
 
