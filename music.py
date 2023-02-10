@@ -424,7 +424,7 @@ def next_proxy() -> None:
         with Status("Searching for proxy server") as status:
             try:
                 __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
-            except fp.fp.errors.FreeProxyException:
+            except fp.errors.FreeProxyException:
                 status.fail("not found")
                 continue
 
