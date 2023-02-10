@@ -861,7 +861,7 @@ class GeniusDatabaseTrack:
             if isinstance(element, bs4.element.NavigableString):
                 return [str(element)]
             elif isinstance(element, bs4.element.Tag):
-                if element.name in ("inread-ad",):
+                if element.name in ("inread-ad", "primis-player"):
                     return [""]
                 elif element.name in ("a", "b", "em", "i", "span"):
                     return [GeniusDatabaseTrack._scrape_text(it) for it in element.contents]
