@@ -706,7 +706,7 @@ class BandcampDatabase:
 class BandcampDatabaseTrack:
     def __init__(self, artists: str, album: str, title: str, url: str, year: str):
         self._url = url
-        self.album = album
+        self.album = album.replace("\u200b", "").replace("\u200e", "")
         self.artists = artists
         # Bandcamp не предоставляет текстов песен
         self.lyrics = ""
