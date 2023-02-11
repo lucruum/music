@@ -795,7 +795,7 @@ class GeniusDatabase:
 class GeniusDatabaseTrack:
     def __init__(self, impl: dict[str, Any]):
         self._album_url = f"https://genius.com/api/songs/{impl['id']}"
-        self._cover_urls = (str(impl["header_image_url"]), str(impl["song_art_image_url"]))
+        self._cover_urls = (str(impl["song_art_image_url"]), str(impl["header_image_url"]))
         self._lyrics_url = str(impl["url"])
         self.artists = GeniusDatabaseTrack._strip_translation(impl["primary_artist"]["name"])
         self.title = GeniusDatabaseTrack._strip_translation(impl["title"])
