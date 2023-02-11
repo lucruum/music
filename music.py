@@ -877,6 +877,8 @@ class GeniusDatabaseTrack:
     @staticmethod
     def _remove_section_headers(s: str) -> str:
         """Удаление '[Текст песни «…»]', '[Куплет]' и т.п. из текста песни"""
+        if re.fullmatch(r"\[.*?\]", s):
+            return ""
         return re.sub("\\[.*?\\]\n+", "", s)
 
 
