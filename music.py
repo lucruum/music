@@ -776,6 +776,8 @@ class GeniusDatabase:
         self._cache = cache
 
     def search_track(self, query: str) -> Optional["GeniusDatabaseTrack"]:
+        query = GeniusDatabase._optimized_query(query)
+
         if query in self._cache["genius"]["tracks"]:
             if self._cache["genius"]["tracks"][query] is not None:
                 return self._cache["genius"]["tracks"][query]  # type: ignore[no-any-return]
@@ -790,6 +792,20 @@ class GeniusDatabase:
 
         self._cache["genius"]["tracks"][query] = None
         return None
+
+    @staticmethod
+    def _optimized_query(query: str) -> str:
+        """
+        В секции "About" к треку "No Man's Land - Падая в ночь" (https://genius.com/Nomans-land--lyrics)
+        VITZYYz0r пишет: genius.com решил автоматически поменять имя авторов.
+
+        Из-за разницы в апостроф Genius перестаёт находить трек:
+            - https://genius.com/search?q=No%20Man%27s%20Land%20-%20%D0%9F%D0%B0%D0%B4%D0%B0%D1%8F%20%D0%B2%20%D0%BD%D0%BE%D1%87%D1%8C  # noqa: E501
+            - https://genius.com/search?q=No%20Mans%20Land%20-%20%D0%9F%D0%B0%D0%B4%D0%B0%D1%8F%20%D0%B2%20%D0%BD%D0%BE%D1%87%D1%8C     # noqa: E501
+
+        Поэтому удаляем апострофы из запроса, чтобы избежать подобных ошибок
+        """
+        return query.replace("'", "")
 
 
 class GeniusDatabaseTrack:
