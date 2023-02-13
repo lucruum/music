@@ -6,5 +6,5 @@ mutagen
 requests
 tqdm
 vk_api
-yandex_music==1.0.0
+yandex_music
 ytmusicapi

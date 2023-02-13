@@ -970,7 +970,7 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
         password = input(f"{login.split('@')[0]}'s password: ")
 
     while True:
-        with Status(f"Logging in to {login}") as status:
+        with Status("Logging in to VKontakte") as status:
             config["vkontakte"]["credentials"] = (login, password)
             try:
                 return VKontakteClient(login, password, cache)
@@ -1215,8 +1215,8 @@ yandex_music.Client.notice_displayed = True
 
 
 class YandexMusicClient:
-    def __init__(self, login: str, password: str):
-        self._impl = yandex_music.Client.from_credentials(login, password, report_new_fields=False)
+    def __init__(self, token: str):
+        self._impl = yandex_music.Client(token).init()
 
     def user(self, id_: str | None = None) -> "YandexMusicUser":
         return YandexMusicUser(self, id_)
@@ -1224,21 +1224,19 @@ class YandexMusicClient:
 
 def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
     """Создание клиента с ранее введёнными учётными данными"""
-    if "credentials" in config["yandex_music"]:
-        login, password = config["yandex_music"]["credentials"]
+    if "token" in config["yandex_music"]:
+        token = config["yandex_music"]["token"]
     else:
-        login = input("Yandex Music login: ")
-        password = input(f"{login.split('@')[0]}'s password: ")
+        token = input("Yandex Music token: ")
 
     while True:
-        with Status(f"Logging in to {login}") as status:
-            config["yandex_music"]["credentials"] = (login, password)
+        with Status("Logging in to Yandex Music") as status:
+            config["yandex_music"]["token"] = token
             try:
-                return YandexMusicClient(login, password)
-            except yandex_music.exceptions.BadRequest:
-                status.fail("invalid login or password")
-                login = input("Yandex Music login: ")
-                password = input(f"{login.split('@')[0]}'s password: ")
+                return YandexMusicClient(token)
+            except yandex_music.exceptions.UnauthorizedError:
+                status.fail("invalid token")
+                token = input("Yandex Music token: ")
 
 
 class YandexMusicUser(Show):
