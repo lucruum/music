@@ -705,8 +705,19 @@ class BandcampDatabase:
 
 class BandcampDatabaseTrack:
     def __init__(self, artists: str, album: str, title: str, url: str, year: str):
+        album = album.replace("\u200b", "").replace("\u200e", "")
+        # Иногда треки дублируют исполнителя в названии альбома: https://cleanplate.bandcamp.com/track/36-day-syndrome
+        if match := re.match(f"{re.escape(artists)} - ", album, re.IGNORECASE):
+            album = album[len(match.group()) :]  # noqa: E203
+
+        title = re.sub(r"\s+", " ", title)
+        title = re.sub(r"\s*[\{\[\(].*?[\)\]\}]", "", title)
+        # А порой и в названии трека: https://kinogroup.bandcamp.com/track/--28
+        if match := re.match(f"{re.escape(artists)} - ", title, re.IGNORECASE):
+            title = title[len(match.group()) :]  # noqa: E203
+
         self._url = url
-        self.album = album.replace("\u200b", "").replace("\u200e", "")
+        self.album = album
         self.artists = artists
         # Bandcamp не предоставляет текстов песен
         self.lyrics = ""
