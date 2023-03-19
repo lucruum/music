@@ -471,8 +471,8 @@ def next_proxy() -> None:
                     bar = f"[*{'=' * done}{' ' * (20 - done)}*]"
                     speed = f"`{got / (time.perf_counter() - start) / 1024 ** 2:.2f}` MBps"
                     status.set_message(f"Testing connection speed, {bar} {speed}")
-                if time.perf_counter() - start > 4:
-                    # Соединение медленнее 0.5 МБ/c
+                if time.perf_counter() - start > 10:
+                    # Соединение медленнее 0.1 МБ/c
                     status.fail("too slow")
                     continue
             except requests.exceptions.RequestException as e:
