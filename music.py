@@ -28,7 +28,9 @@ import os
 import pathlib
 import pickle
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -372,7 +374,11 @@ else:
 #
 
 
-MUSIC_FOLDER = pathlib.Path(f"{os.environ['USERPROFILE']}") / "Music"
+MUSIC_FOLDER = (
+    pathlib.Path(os.environ["USERPROFILE"], "Music")
+    if sys.platform == "win32"
+    else pathlib.Path("/storage/emulated/0/Music")
+)
 
 
 def remove_invalid_path_chars(s: str) -> str:
@@ -393,7 +399,10 @@ def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
     except (Exception, KeyboardInterrupt):
         raise
     else:
-        tmp_path.rename(path)
+        # На Android'е `tmp_path.rename(path)` выбросит исключение `OSError: [Errno 18] Invalid cross-device link`,
+        # из-за разных файловых систем Termux'а и `path`'а: /data и /storage
+        # (см. https://stackoverflow.com/questions/42392600/oserror-errno-18-invalid-cross-device-link)
+        shutil.move(tmp_path, path)
     finally:
         tmp_path.unlink(missing_ok=True)
 
