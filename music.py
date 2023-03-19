@@ -509,10 +509,10 @@ def cache_file(path: pathlib.Path) -> AutovivificiousDict:
 
 
 class Database:
-    def __init__(self, cache: AutovivificiousDict) -> None:
-        self._bandcamp_database = BandcampDatabase(cache)
-        self._genius_database = GeniusDatabase(cache)
-        self._youtube_music_database = YouTubeMusicDatabase(cache)
+    def __init__(self) -> None:
+        self._bandcamp_database = BandcampDatabase()
+        self._genius_database = GeniusDatabase()
+        self._youtube_music_database = YouTubeMusicDatabase()
 
     def search_track(self, query: str) -> "DatabaseTrack":
         return DatabaseTrack(self, Database._optimized_query(query))
@@ -657,15 +657,7 @@ class DatabaseTrack:
 
 
 class BandcampDatabase:
-    def __init__(self, cache: AutovivificiousDict):
-        self._cache = cache
-
     def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
-        if query in self._cache["bandcamp"]["tracks"]:
-            if self._cache["bandcamp"]["tracks"][query] is not None:
-                return self._cache["bandcamp"]["tracks"][query]  # type: ignore[no-any-return]
-            return None
-
         response = requests.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
         html_ = response.text
         soup = bs4.BeautifulSoup(html_, "html.parser")
@@ -691,15 +683,11 @@ class BandcampDatabase:
             }
 
         if not matches:
-            self._cache["bandcamp"]["tracks"][query] = None
             return None
 
         if closest_matches := difflib.get_close_matches(query, matches, n=1):
-            track = BandcampDatabaseTrack(**matches[closest_matches[0]])
-            self._cache["bandcamp"]["tracks"][query] = track
-            return track
+            return BandcampDatabaseTrack(**matches[closest_matches[0]])
 
-        self._cache["bandcamp"]["tracks"][query] = None
         return None
 
 
@@ -783,25 +771,14 @@ class GeniusDatabase:
         "Genius Vietnamese Translations",
     }
 
-    def __init__(self, cache: AutovivificiousDict):
-        self._cache = cache
-
     def search_track(self, query: str) -> Optional["GeniusDatabaseTrack"]:
         query = GeniusDatabase._optimized_query(query)
-
-        if query in self._cache["genius"]["tracks"]:
-            if self._cache["genius"]["tracks"][query] is not None:
-                return self._cache["genius"]["tracks"][query]  # type: ignore[no-any-return]
-            return None
 
         response = requests.get("https://genius.com/api/search/song", params={"q": query})
         for it in response.json()["response"]["sections"][0]["hits"]:
             if it["result"]["artist_names"] not in GeniusDatabase.TRANSLATION_ARTIST_NAMES:
-                track = GeniusDatabaseTrack(it["result"])
-                self._cache["genius"]["tracks"][query] = track
-                return track
+                return GeniusDatabaseTrack(it["result"])
 
-        self._cache["genius"]["tracks"][query] = None
         return None
 
     @staticmethod
@@ -910,35 +887,25 @@ class GeniusDatabaseTrack:
 
 
 class YouTubeMusicDatabase:
-    _IMPL = ytmusicapi.YTMusic()
-    # Язык возвращаемых данных задаётся параметром `language` конструктора `YTMusic`,
-    # но в виду того, что библиотека не поддерживает русскую локализацию,
-    # выставляем язык хоста напрямую в заголовках
-    # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
-    _IMPL.context["context"]["client"]["hl"] = "ru"
-
-    def __init__(self, cache: AutovivificiousDict):
-        self._cache = cache
+    def __init__(self) -> None:
+        self._impl = ytmusicapi.YTMusic()
+        # Язык возвращаемых данных задаётся параметром `language` конструктора `YTMusic`,
+        # но в виду того, что библиотека не поддерживает русскую локализацию,
+        # выставляем язык хоста напрямую в заголовках
+        # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
+        self._impl.context["context"]["client"]["hl"] = "ru"
 
     def search_track(self, query: str) -> Optional["YouTubeMusicDatabaseTrack"]:
-        if query in self._cache["youtube_music"]["tracks"]:
-            if self._cache["youtube_music"]["tracks"][query] is not None:
-                return self._cache["youtube_music"]["tracks"][query]  # type: ignore[no-any-return]
-            return None
-
-        if found := YouTubeMusicDatabase._IMPL.search(query, filter="songs", limit=1):
-            track = YouTubeMusicDatabaseTrack(found[0])
-            self._cache["youtube_music"]["tracks"][query] = track
-            return track
-
-        self._cache["youtube_music"]["tracks"][query] = None
+        if found := self._impl.search(query, filter="songs", limit=1):
+            return YouTubeMusicDatabaseTrack(self, found[0])
         return None
 
 
 class YouTubeMusicDatabaseTrack:
-    def __init__(self, impl: dict[str, Any]):
+    def __init__(self, database: YouTubeMusicDatabase, impl: dict[str, Any]):
         self._cover_url = str(impl["thumbnails"][0]["url"]).replace("w60-h60", "w600-h600")
-        self._playlist = YouTubeMusicDatabase._IMPL.get_watch_playlist(impl["videoId"], limit=1)
+        self._database = database
+        self._playlist = database._impl.get_watch_playlist(impl["videoId"], limit=1)
         self.album = str(impl["album"]["name"]) if impl["album"] is not None else ""
         self.artists = ", ".join(it["name"] for it in impl["artists"])
         self.title = str(impl["title"])
@@ -950,7 +917,7 @@ class YouTubeMusicDatabaseTrack:
     @property
     def lyrics(self) -> str:
         try:
-            result = YouTubeMusicDatabase._IMPL.get_lyrics(self._playlist["lyrics"])["lyrics"]
+            result = self._database._impl.get_lyrics(self._playlist["lyrics"])["lyrics"]
             return result is not None and str(result) or ""
         except Exception:
             return ""
@@ -1432,7 +1399,7 @@ def sync(
 
 def main() -> None:
     config = cache_file(pathlib.Path(".config"))
-    database = Database(cache_file(pathlib.Path(".database")))
+    database = Database()
 
     def vkontakte_routine() -> None:
         client = make_vkontakte_client(config, cache_file(pathlib.Path(".vkontakte")))
