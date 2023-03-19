@@ -839,6 +839,9 @@ class GeniusDatabaseTrack:
     @property
     def cover(self) -> bytes:
         for it in self._cover_urls:
+            # Если у трека нет обложки, Genius возвращает картинку со своим логотипом
+            if it.startswith("https://assets.genius.com/images/default_cover_image.png"):
+                continue
             try:
                 return requests.get(it).content
             except requests.exceptions.ConnectionError:
