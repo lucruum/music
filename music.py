@@ -968,7 +968,7 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
             config["vkontakte"]["credentials"] = (login, password)
             try:
                 return VKontakteClient(login, password, cache)
-            except vk_api.exceptions.BadPassword:
+            except (vk_api.exceptions.BadPassword, vk_api.exceptions.LoginRequired, vk_api.exceptions.PasswordRequired):
                 status.fail("invalid login or password")
                 login = input("VKontakte login: ")
                 password = input(f"{login.split('@')[0]}'s password: ")
@@ -1227,6 +1227,10 @@ def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
         with Status("Logging in to Yandex Music") as status:
             config["yandex_music"]["token"] = token
             try:
+                # С пустым токеном yandex_music делает запросы из-под неавторизованного
+                # пользователя, что накладывает ограничения на доступ плейлистам
+                if token.isspace():
+                    raise yandex_music.exceptions.UnauthorizedError()
                 return YandexMusicClient(token)
             except yandex_music.exceptions.UnauthorizedError:
                 status.fail("invalid token")
