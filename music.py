@@ -1217,12 +1217,12 @@ class VKontakteAttachedTrack(VKontakteTrack):
 
 
 # Не показывать сообщение с лицензией
-yandex_music.Client.notice_displayed = True
+yandex_music.Client._Client__notice_displayed = True  # type: ignore[attr-defined]
 
 
 class YandexMusicClient:
     def __init__(self, token: str):
-        self._impl = yandex_music.Client(token).init()
+        self._impl: yandex_music.Client = yandex_music.Client(token).init()  # type: ignore[no-untyped-call]
 
     def user(self, id_: str | None = None) -> "YandexMusicUser":
         return YandexMusicUser(self, id_)
@@ -1253,17 +1253,20 @@ class YandexMusicUser(Show):
     def __init__(self, client: YandexMusicClient, id_: str | None):
         info_url = f"{client._impl.base_url}/users/{id_}"
         info = client._impl._request.get(info_url)
+        assert isinstance(info, dict)
 
         self._client = client
-        self.id = str(info["uid"])
-        self.name = str(info["name"])
+        self.id: str = info["uid"]
+        self.name: str = info["name"]
 
     def show(self) -> str:
         return self.name
 
     @property
     def tracks(self) -> list["YandexMusicTrack"]:
-        return [YandexMusicTrack(it) for it in self._client._impl.users_likes_tracks(self.id).fetch_tracks()]
+        if liked := self._client._impl.users_likes_tracks(self.id):
+            return [YandexMusicTrack(it) for it in liked.fetch_tracks()]
+        return []
 
 
 class YandexMusicTrack(Show):
