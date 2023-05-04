@@ -1396,11 +1396,13 @@ def sync(
             it.rename(it.with_stem(f"{index}_{id_}"))
 
     def download_missing_tracks() -> None:
+        n_downloaded = len(list(dest_folder.glob("*.mp3")))
+
         for i, it in enumerate(missing_tracks):
             id_ = it.id
             index = track_indices[id_]
 
-            write(f"[*{i + 1}*/*{len(missing_tracks)}*] Downloading `{it}`")
+            write(f"[*{n_downloaded + i + 1}*/*{n_downloaded + len(missing_tracks)}*] Downloading `{it}`")
             with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
                 it.download(tmp_path)
                 with Status("Embedding metadata"):
