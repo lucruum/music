@@ -37,6 +37,12 @@ import traceback
 import uuid
 import warnings
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import termios
+    import tty
+
 import bs4
 import colorama
 import ffpb  # type: ignore[import]
@@ -367,6 +373,52 @@ else:
         if "ncols" not in kwargs or kwargs["ncols"] is None:
             kwargs["ncols"] = os.get_terminal_size()[0]
         return tqdm.tqdm(*args, **kwargs)
+
+
+def read_password(prompt: str = "") -> str:
+    """Ввод пароля с заменой выводимых символов на звёздочки"""
+    # См. https://github.com/asweigart/pwinput/blob/9336b861fca3de3fe82a7ced6e80c2fdb0c53abb/src/pwinput/__init__.py#L48
+    result = ""
+    write(prompt, flush=True, end="")
+    while True:
+        code = ord(read_char_unbuffered())
+        # ETX (end of text: код "03" используется для отправки процессу сигнала "SIGINT")
+        if code == 3:
+            raise KeyboardInterrupt()
+        # BS (backspace) и FF (form feed)
+        elif code in (8, 127):
+            if result:
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+                result = result[:-1]
+        # LF (line feed)
+        elif code == 13:
+            sys.stdout.write("\n")
+            return "".join(result)
+        # Непечатаемые символы
+        elif 0 <= code <= 31:
+            pass
+        else:
+            sys.stdout.write("*")
+            sys.stdout.flush()
+            result += chr(code)
+    return result
+
+
+def read_char_unbuffered() -> str:
+    """Получает символ из консоли без отображения (`getch`)"""
+    # См. https://stackoverflow.com/a/510364
+    if sys.platform == "win32":
+        return msvcrt.getch().decode()
+    else:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
 
 
 #
@@ -976,7 +1028,7 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
         login, password = config["vkontakte"]["credentials"]
     else:
         login = input("VKontakte login: ")
-        password = input(f"{login.split('@')[0]}'s password: ")
+        password = read_password(f"{login.split('@')[0]}'s password: ")
 
     while True:
         with Status("Logging in to VKontakte") as status:
@@ -1236,7 +1288,7 @@ def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
     if "token" in config["yandex_music"]:
         token = config["yandex_music"]["token"]
     else:
-        token = input("Yandex Music token: ")
+        token = read_password("Yandex Music token: ")
 
     while True:
         with Status("Logging in to Yandex Music") as status:
