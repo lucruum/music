@@ -1486,7 +1486,9 @@ def main() -> None:
 
     def yandex_music_routine() -> None:
         client = make_yandex_music_client(config)
-        user = client.user()
+        # Явно указываем пользователя на тот случай, когда отвалится токен,
+        # и придётся зайти из-под чужого аккаунта
+        user = client.user("lucruum666")
         tracks = user.tracks
 
         sync(tracks, MUSIC_FOLDER / "Яндекс Музыка", database)
