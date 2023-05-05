@@ -547,7 +547,10 @@ class Database:
             return s
 
         query = re.sub(r"\s+", " ", query)
-        query = re.sub(r"\s*[\{\[\(].*?[\)\]\}]", "", query)
+        parens_stripped = re.sub(r"\s*[\{\[\(].*?[\)\]\}]", "", query)
+        # Оставляем скобки, если исполнитель или название песни целиком в них заключены
+        if len(parens_stripped.split(" - ")) >= 2:
+            query = parens_stripped
         query = " - ".join(filter(None, map(strip_author, query.split(" - "))))
         return query
 
