@@ -1,6 +1,7 @@
 from types import NoneType, TracebackType
 from typing import (
     Any,
+    cast,
     Iterable,
     Iterator,
     Mapping,
@@ -1259,7 +1260,7 @@ class VKontakteTrack(Show):
 
 class VKontakteAttachedTrack(VKontakteTrack):
     def __init__(self, impl: dict[str, Any]):
-        self._cover_url = impl["coverUrl"] is not None and str(impl["coverUrl"]) or ""
+        self._cover_url = impl["coverUrl"] != "None" and cast(str, impl["coverUrl"]) or ""
         self._url = str(impl["url"])
         self.artists = str(impl["artist"])
         self.id = f"{impl['owner_id']}{impl['id']}"
