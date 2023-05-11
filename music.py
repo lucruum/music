@@ -1242,7 +1242,39 @@ class VKontakteTrack(Show):
                     # См. комментарий к `mytqdm`
                     ncols=os.get_terminal_size()[0],
                     total=kwargs["total"],
+                    # См. `Bar.format_meter`
+                    unit_divisor=1024,
+                    unit_scale=True,
+                    unit="B",
                 )
+
+            @staticmethod
+            def format_meter(**kwargs):  # type: ignore[no-untyped-def]
+                """
+                `ffpb.ProgressNotifier` показывает прогресс загрузки трека в секундах:
+
+                    # Скачано 2:26 минуты из 5:29
+                    Receiving track:  44%|::::::::::..............| 146/329 [00:01<00:02, 82.43it/s]
+
+                Можно было бы предположить, что для отображения прогресса скачивания в байтах достаточно
+                передать в `super().__init__` параметры `unit='B'`, `unit_divisor=1024` и `unit_scale=bitrate / 8`,
+                но, к сожалению, это не сработает: tqdm не добавляет приставки СИ, если `unit_scale` не равен `True`
+                (см. https://github.com/tqdm/tqdm/issues/765#issuecomment-545366526):
+
+                    # В правой части ожидалось '5.70M/12.9M [00:01<00:02, 2.95MB/s]'
+                    Receiving track:  44%|:::....| 5980160.0/13475840.0 [00:01<00:02, 3098533.37B/s]
+
+                Ввиду этого переопределяем метод `format_meter` и вручную масштабируем параметры
+                """
+                bitrate = 320 * 1024
+                # Идентично https://github.com/tqdm/tqdm/blob/0bb91857eca0d4aea08f66cf1c8949abe0cd6b7a/tqdm/std.py#L427,
+                # за тем исключением, что нет строчки `unit_scale = False`
+                if kwargs["total"]:
+                    kwargs["total"] *= bitrate / 8
+                kwargs["n"] *= bitrate / 8
+                if kwargs["rate"]:
+                    kwargs["rate"] *= bitrate / 8
+                return tqdm.tqdm.format_meter(**kwargs)
 
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
             process = subprocess.Popen(
