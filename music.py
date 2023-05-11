@@ -723,7 +723,23 @@ class DatabaseTrack:
 
 class BandcampDatabase:
     def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
-        response = requests.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
+        try:
+            response = requests.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
+        # В своё время Роспотребнадзор заблокировал домен f4.bcbits.com, на котором Bandcamp хостит свои картинки
+        # (https://roskomsvoboda.org/post/rpn-narushil-raboru-bandcamp-and-photobucket/),
+        # и, может быть из-за этого, некоторые публичные сети ограничивают доступ к сайту
+        except requests.exceptions.SSLError:
+            while True:
+                try:
+                    response = requests.get(
+                        "https://bandcamp.com/search",
+                        params={"q": query, "item_type": "t"},
+                        proxies={"https": proxy()},
+                    )
+                except requests.exceptions.RequestException:
+                    next_proxy()
+                else:
+                    break
         html_ = response.text
         soup = bs4.BeautifulSoup(html_, "html.parser")
 
