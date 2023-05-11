@@ -481,11 +481,10 @@ def next_proxy() -> None:
     global __proxy
 
     while True:
-        # Элитные прокси-сервера реже отваливаются
-        # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
         with Status("Searching for proxy server") as status:
             try:
-                __proxy = fp.fp.FreeProxy(elite=True, rand=True).get()
+                # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
+                __proxy = fp.fp.FreeProxy(rand=True).get()
             except fp.errors.FreeProxyException:
                 status.fail("not found")
                 continue
