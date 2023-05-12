@@ -721,24 +721,24 @@ class DatabaseTrack:
 
 
 class BandcampDatabase:
-    def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
+    @staticmethod
+    def get(url: str, *, params: dict[str, str] = {}) -> requests.Response:
+        """
+        В своё время Роспотребнадзор заблокировал домен f4.bcbits.com, на котором Bandcamp хостит свои картинки
+        (https://roskomsvoboda.org/post/rpn-narushil-raboru-bandcamp-and-photobucket/),
+        и, может быть из-за этого, некоторые публичные сети ограничивают доступ к сайту
+        """
         try:
-            response = requests.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
-        # В своё время Роспотребнадзор заблокировал домен f4.bcbits.com, на котором Bandcamp хостит свои картинки
-        # (https://roskomsvoboda.org/post/rpn-narushil-raboru-bandcamp-and-photobucket/),
-        # и, может быть из-за этого, некоторые публичные сети ограничивают доступ к сайту
+            return requests.get(url, params=params)
         except requests.exceptions.SSLError:
             while True:
                 try:
-                    response = requests.get(
-                        "https://bandcamp.com/search",
-                        params={"q": query, "item_type": "t"},
-                        proxies={"https": proxy()},
-                    )
+                    return requests.get(url, params=params, proxies={"https": proxy()})
                 except requests.exceptions.RequestException:
                     next_proxy()
-                else:
-                    break
+
+    def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
+        response = BandcampDatabase.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
         html_ = response.text
         soup = bs4.BeautifulSoup(html_, "html.parser")
 
@@ -794,7 +794,7 @@ class BandcampDatabaseTrack:
 
     @property
     def cover(self) -> bytes:
-        response = requests.get(self._url)
+        response = BandcampDatabase.get(self._url)
         html_ = response.text
         soup = bs4.BeautifulSoup(html_, "html.parser")
 
