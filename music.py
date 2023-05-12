@@ -1054,7 +1054,7 @@ def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDic
             except (vk_api.exceptions.BadPassword, vk_api.exceptions.LoginRequired, vk_api.exceptions.PasswordRequired):
                 status.fail("invalid login or password")
                 login = input("VKontakte login: ")
-                password = input(f"{login.split('@')[0]}'s password: ")
+                password = read_password(f"{login.split('@')[0]}'s password: ")
 
 
 class VKontakteGroup(Show):
@@ -1349,7 +1349,7 @@ def make_yandex_music_client(config: AutovivificiousDict) -> YandexMusicClient:
                 return YandexMusicClient(token)
             except yandex_music.exceptions.UnauthorizedError:
                 status.fail("invalid token")
-                token = input("Yandex Music token: ")
+                token = read_password("Yandex Music token: ")
 
 
 class YandexMusicUser(Show):
