@@ -484,7 +484,7 @@ def next_proxy() -> None:
         with Status("Searching for proxy server") as status:
             try:
                 # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
-                __proxy = fp.fp.FreeProxy(rand=True).get()
+                __proxy = fp.fp.FreeProxy(rand=True, timeout=1).get()
             except fp.errors.FreeProxyException:
                 status.fail("not found")
                 continue
@@ -495,7 +495,7 @@ def next_proxy() -> None:
                 response = requests.get(
                     "https://f4.bcbits.com/img/a1056493284_10.jpg",
                     proxies={"https": __proxy},
-                    timeout=5,
+                    timeout=1,
                 )
                 actual_hashsum = hashlib.sha256(response.content).hexdigest()
                 expected_hashsum = "f9e2c765115cfc602faace1485f86c3507d8e246471cf126dcd0b647df04368f"
@@ -514,6 +514,7 @@ def next_proxy() -> None:
                     "http://ipv4.download.thinkbroadband.com:80/2MB.zip",
                     proxies={"http": __proxy},
                     stream=True,
+                    timeout=1,
                 )
                 length = int(response.headers["content-length"])
                 got = 0
