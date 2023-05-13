@@ -1021,7 +1021,18 @@ class VKontakteClient:
         session = vk_api.VkApi(
             login,
             password,
-            captcha_handler=lambda x: x.try_again(input(f"Enter symbols from the picture {x.get_url()}: ")),
+            captcha_handler=lambda x: x.try_again(
+                input(
+                    # Гиперссылки в Termux включают в себя завершающее двоеточие,
+                    # ввиду чего открывается битый URL "https://api.vk.com/captcha.php?sid={sid}:" (с ":" в конце)
+                    "Enter symbols from the picture {}{}: ".format(
+                        x.get_url(),
+                        # Windows Terminal отображает \u200b (пробел нулевой ширины) пустой ячейкой
+                        # (https://github.com/microsoft/terminal/issues/8667)
+                        "\u200b" if sys.platform != "win32" else "",
+                    )
+                )
+            ),
         )
         session.auth()
 
