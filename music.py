@@ -938,7 +938,7 @@ class GeniusDatabaseTrack:
         for it in soup.find_all("div", {"data-lyrics-container": "true"}, recursive=True):
             result += GeniusDatabaseTrack._scrape_text(it) + "\n"
         result = result.strip()
-        result = GeniusDatabaseTrack._remove_section_headers(result)
+        result = remove_lyrics_section_headers(result)
         return result
 
     @staticmethod
@@ -961,13 +961,6 @@ class GeniusDatabaseTrack:
                 assert False, "unreachable"
 
         return "".join(flatten(impl(element)))
-
-    @staticmethod
-    def _remove_section_headers(s: str) -> str:
-        """Удаление '[Текст песни «…»]', '[Куплет]' и т.п. из текста песни"""
-        if re.fullmatch(r"\[.*?\]", s):
-            return ""
-        return re.sub("\\[.*?\\]\n+", "", s)
 
 
 class YouTubeMusicDatabase:
@@ -1001,14 +994,24 @@ class YouTubeMusicDatabaseTrack:
     @property
     def lyrics(self) -> str:
         try:
-            result = self._database._impl.get_lyrics(self._playlist["lyrics"])["lyrics"]
-            return result is not None and str(result) or ""
+            result: str | None = self._database._impl.get_lyrics(self._playlist["lyrics"])["lyrics"]
+            if result is None:
+                return ""
+            result = remove_lyrics_section_headers(result)
+            return result
         except Exception:
             return ""
 
     @property
     def year(self) -> str:
         return str(self._playlist["tracks"][0].get("year", ""))
+
+
+def remove_lyrics_section_headers(s: str) -> str:
+    """Удаление '[Текст песни «…»]', '[Куплет]' и т.п. из текста песни"""
+    if re.fullmatch(r"\[.*?\]", s):
+        return ""
+    return re.sub("\\[.*?\\]\n+", "", s)
 
 
 #
