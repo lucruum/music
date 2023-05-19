@@ -1306,6 +1306,21 @@ class VKontakteTrack(Show):
                     kwargs["rate"] *= bitrate / 8
                 return tqdm.tqdm.format_meter(**kwargs)
 
+            def update(self, n: float | None = 1) -> bool | None:
+                """
+                Длительность трека "Черная дыра (SLOWED BY Ĉarrier Ħeroin) - Kunteynir"
+                (https://vk.com/audio240489972_456241117_82c83447669f2d5518) составляет 7:55 минут,
+                но ffpb выставляет `self.total` в 474 секунды (7:54 минуты):
+
+                    # Предпоследняя итерация
+                    Receiving track:  92%|:::::::::::::::::::..| 17.0M/18.5M [00:03<00:00, 4.74MB/s]
+
+                    # Последняя итерация: исчез прогресс выполнения, и размер файла изменился с 18.5MB на 18.6MB
+                    Receiving track: 18.6MB [00:04, 4.71MB/s]
+                """
+                self.total = max(self.total, self.n + n)
+                return super().update(n)
+
         with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
             process = subprocess.Popen(
                 ["ffmpeg", "-http_persistent", "false", "-i", self._url, "-codec", "copy", path],
