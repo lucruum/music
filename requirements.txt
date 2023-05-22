@@ -3,6 +3,8 @@ colorama
 ffpb
 free_proxy
 mutagen
+python-youtube
+pytube
 requests
 tqdm
 vk_api

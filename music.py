@@ -49,6 +49,10 @@ import colorama
 import ffpb  # type: ignore[import]
 import fp.fp  # type: ignore[import]
 import mutagen.id3
+import pytube  # type: ignore[import]
+import pytube.extract  # type: ignore[import]
+import pytube.request  # type: ignore[import]
+import pyyoutube  # type: ignore[import]
 import requests
 import tqdm
 import vk_api  # type: ignore[import]
@@ -422,6 +426,87 @@ def read_char_unbuffered() -> str:
         return ch
 
 
+def ffmpeg_with_progress_bar(
+    *,
+    bitrate: float,
+    ffmpeg_args: list[str],
+    tqdm_ascii: bool | str | None = None,
+    tqdm_desc: str | None = None,
+) -> None:
+    """
+    Запускает ffmpeg с аргументами `ffmpeg_args` и отображает прогресс выполнения команды
+    Параметры tqdm'а сильно ограничены ввиду чрезмерной хрупкости кода
+    """
+
+    class Bar(tqdm.tqdm):  # type: ignore[type-arg]
+        def __init__(self, **kwargs: dict[str, Any]):
+            assert isinstance(kwargs["total"], int)
+
+            super().__init__(
+                ascii=tqdm_ascii,
+                desc=tqdm_desc,
+                # См. комментарий к `mytqdm`
+                ncols=os.get_terminal_size()[0],
+                total=kwargs["total"],
+                # См. `Bar.format_meter`
+                unit_divisor=1024,
+                unit_scale=True,
+                unit="B",
+            )
+
+        @staticmethod
+        def format_meter(**kwargs):  # type: ignore[no-untyped-def]
+            """
+            `ffpb.ProgressNotifier` показывает прогресс загрузки трека в секундах:
+
+                # Скачано 2:26 минуты из 5:29
+                Receiving track:  44%|::::::::::..............| 146/329 [00:01<00:02, 82.43it/s]
+
+            Можно было бы предположить, что для отображения прогресса скачивания в байтах достаточно
+            передать в `super().__init__` параметры `unit='B'`, `unit_divisor=1024` и `unit_scale=bitrate / 8`,
+            но, к сожалению, это не сработает: tqdm не добавляет приставки СИ, если `unit_scale` не равен `True`
+            (см. https://github.com/tqdm/tqdm/issues/765#issuecomment-545366526):
+
+                # В правой части ожидалось '5.70M/12.9M [00:01<00:02, 2.95MB/s]'
+                Receiving track:  44%|:::....| 5980160.0/13475840.0 [00:01<00:02, 3098533.37B/s]
+
+            Ввиду этого переопределяем метод `format_meter` и вручную масштабируем параметры
+            """
+            # Идентично https://github.com/tqdm/tqdm/blob/0bb91857eca0d4aea08f66cf1c8949abe0cd6b7a/tqdm/std.py#L427,
+            # за тем исключением, что нет строчки `unit_scale = False`
+            if kwargs["total"]:
+                kwargs["total"] *= bitrate / 8
+            kwargs["n"] *= bitrate / 8
+            if kwargs["rate"]:
+                kwargs["rate"] *= bitrate / 8
+            return tqdm.tqdm.format_meter(**kwargs)
+
+        def update(self, n: float | None = 1) -> bool | None:
+            """
+            Длительность трека "Черная дыра (SLOWED BY Ĉarrier Ħeroin) - Kunteynir"
+            (https://vk.com/audio240489972_456241117_82c83447669f2d5518) составляет 7:55 минут,
+            но ffpb выставляет `self.total` в 474 секунды (7:54 минуты):
+
+                # Предпоследняя итерация
+                Receiving track:  92%|:::::::::::::::::::..| 17.0M/18.5M [00:03<00:00, 4.74MB/s]
+
+                # Последняя итерация: исчез прогресс выполнения, и размер файла изменился с 18.5MB на 18.6MB
+                Receiving track: 18.6MB [00:04, 4.71MB/s]
+            """
+            self.total = max(self.total, self.n + n)
+            return super().update(n)
+
+    with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
+        process = subprocess.Popen(["ffmpeg"] + ffmpeg_args, stderr=subprocess.PIPE)
+
+        while True:
+            if stream := process.stderr:
+                if data := stream.read(1):
+                    notifier(data)
+                elif process.poll() is not None:
+                    break
+
+
 #
 # Файловая система
 #
@@ -670,11 +755,17 @@ class DatabaseTrack:
         query = query.lower()
         found = found.lower()
 
-        artists_artists_ratio = difflib.SequenceMatcher(a=query.split(" - ")[0], b=found.split(" - ")[0]).ratio()
-        title_title_ratio = difflib.SequenceMatcher(a=query.split(" - ")[1], b=found.split(" - ")[1]).ratio()
+        query_parts = query.split(" - ")
+        found_parts = found.split(" - ")
 
-        artists_title_ratio = difflib.SequenceMatcher(a=query.split(" - ")[0], b=found.split(" - ")[1]).ratio()
-        title_artists_ratio = difflib.SequenceMatcher(a=query.split(" - ")[1], b=found.split(" - ")[0]).ratio()
+        if len(query_parts) == 1 or len(found_parts) == 1:
+            return difflib.SequenceMatcher(a=query, b=found).ratio()
+
+        artists_artists_ratio = difflib.SequenceMatcher(a=query_parts[0], b=found_parts[0]).ratio()
+        title_title_ratio = difflib.SequenceMatcher(a=query_parts[1], b=found_parts[1]).ratio()
+
+        artists_title_ratio = difflib.SequenceMatcher(a=query_parts[0], b=found_parts[1]).ratio()
+        title_artists_ratio = difflib.SequenceMatcher(a=query_parts[1], b=found_parts[0]).ratio()
 
         return max(artists_artists_ratio + title_title_ratio, artists_title_ratio + title_artists_ratio) / 2
 
@@ -1262,77 +1353,12 @@ class VKontakteTrack(Show):
         )
 
     def download(self, path: pathlib.Path) -> None:
-        class Bar(tqdm.tqdm):  # type: ignore[type-arg]
-            def __init__(self, **kwargs: dict[str, Any]):
-                assert isinstance(kwargs["total"], int)
-
-                super().__init__(
-                    ascii=".:",
-                    desc="Receiving track",
-                    # См. комментарий к `mytqdm`
-                    ncols=os.get_terminal_size()[0],
-                    total=kwargs["total"],
-                    # См. `Bar.format_meter`
-                    unit_divisor=1024,
-                    unit_scale=True,
-                    unit="B",
-                )
-
-            @staticmethod
-            def format_meter(**kwargs):  # type: ignore[no-untyped-def]
-                """
-                `ffpb.ProgressNotifier` показывает прогресс загрузки трека в секундах:
-
-                    # Скачано 2:26 минуты из 5:29
-                    Receiving track:  44%|::::::::::..............| 146/329 [00:01<00:02, 82.43it/s]
-
-                Можно было бы предположить, что для отображения прогресса скачивания в байтах достаточно
-                передать в `super().__init__` параметры `unit='B'`, `unit_divisor=1024` и `unit_scale=bitrate / 8`,
-                но, к сожалению, это не сработает: tqdm не добавляет приставки СИ, если `unit_scale` не равен `True`
-                (см. https://github.com/tqdm/tqdm/issues/765#issuecomment-545366526):
-
-                    # В правой части ожидалось '5.70M/12.9M [00:01<00:02, 2.95MB/s]'
-                    Receiving track:  44%|:::....| 5980160.0/13475840.0 [00:01<00:02, 3098533.37B/s]
-
-                Ввиду этого переопределяем метод `format_meter` и вручную масштабируем параметры
-                """
-                bitrate = 320 * 1024
-                # Идентично https://github.com/tqdm/tqdm/blob/0bb91857eca0d4aea08f66cf1c8949abe0cd6b7a/tqdm/std.py#L427,
-                # за тем исключением, что нет строчки `unit_scale = False`
-                if kwargs["total"]:
-                    kwargs["total"] *= bitrate / 8
-                kwargs["n"] *= bitrate / 8
-                if kwargs["rate"]:
-                    kwargs["rate"] *= bitrate / 8
-                return tqdm.tqdm.format_meter(**kwargs)
-
-            def update(self, n: float | None = 1) -> bool | None:
-                """
-                Длительность трека "Черная дыра (SLOWED BY Ĉarrier Ħeroin) - Kunteynir"
-                (https://vk.com/audio240489972_456241117_82c83447669f2d5518) составляет 7:55 минут,
-                но ffpb выставляет `self.total` в 474 секунды (7:54 минуты):
-
-                    # Предпоследняя итерация
-                    Receiving track:  92%|:::::::::::::::::::..| 17.0M/18.5M [00:03<00:00, 4.74MB/s]
-
-                    # Последняя итерация: исчез прогресс выполнения, и размер файла изменился с 18.5MB на 18.6MB
-                    Receiving track: 18.6MB [00:04, 4.71MB/s]
-                """
-                self.total = max(self.total, self.n + n)
-                return super().update(n)
-
-        with ffpb.ProgressNotifier(tqdm=Bar) as notifier:
-            process = subprocess.Popen(
-                ["ffmpeg", "-http_persistent", "false", "-i", self._url, "-codec", "copy", path],
-                stderr=subprocess.PIPE,
-            )
-
-            while True:
-                if stream := process.stderr:
-                    if data := stream.read(1):
-                        notifier(data)
-                    elif process.poll() is not None:
-                        break
+        ffmpeg_with_progress_bar(
+            bitrate=320 * 1024,
+            ffmpeg_args=["-http_persistent", "false", "-i", self._url, "-codec", "copy", str(path)],
+            tqdm_ascii=".:",
+            tqdm_desc="Receiving track",
+        )
 
 
 class VKontakteAttachedTrack(VKontakteTrack):
@@ -1476,6 +1502,132 @@ class YandexMusicTrack(Show):
 
 
 #
+# YouTube
+#
+
+
+# `pytube.Stream.download` вызывает `on_progress` по загрузке каждых `default_range_size` байт:
+# со значением по умолчанию (9 МБ) индикатор загрузки трека мгновенно заполняется, не предоставляя
+# никакой информации о скорости загрузки трека
+pytube.request.default_range_size = 1024**2
+
+
+class YouTubeClient:
+    def __init__(self, api_key: str):
+        self._impl = pyyoutube.Api(api_key=api_key)
+        # pyyoutube откладывает валидацию ключа API до первого запроса
+        self._impl.get_channel_info(channel_id="UCK8sQmJBp8GCxrOtXWBpyEA")
+
+    def user(self, id_: str) -> "YouTubeUser":
+        return YouTubeUser(self, id_)
+
+
+def make_youtube_client(config: AutovivificiousDict) -> YouTubeClient:
+    """Создание клиента с ранее введёнными учётными данными"""
+    if "api_key" in config["youtube"]:
+        api_key = config["youtube"]["api_key"]
+    else:
+        api_key = read_password("YouTube API key: ")
+
+    while True:
+        with Status("Logging in to YouTube") as status:
+            config["youtube"]["api_key"] = api_key
+            try:
+                return YouTubeClient(api_key)
+            except pyyoutube.error.PyYouTubeException:
+                status.fail("invalid API key")
+                api_key = read_password("YouTube API key: ")
+
+
+class YouTubeUser(Show):
+    def __init__(self, client: YouTubeClient, id_: str):
+        # `extract.channel_name` не умеет работать с новыми "@"-ссылками (https://github.com/pytube/pytube/issues/1443)
+        save = pytube.extract.channel_name
+        pytube.extract.channel_name = lambda x: x
+        channel = pytube.Channel(id_)
+        pytube.extract.channel_name = save
+
+        self.client = client
+        self.id: str = channel.channel_id
+        self.name: str = channel.channel_name
+
+    def show(self) -> str:
+        return self.name
+
+    @property
+    def playlists(self) -> list["YouTubePlaylist"]:
+        return [YouTubePlaylist(self.client, it) for it in self.client._impl.get_playlists(channel_id=self.id).items]
+
+
+class YouTubePlaylist(Show):
+    def __init__(self, client: YouTubeClient, impl: pyyoutube.Playlist):
+        self.client = client
+        self.id: str = impl.to_dict()["id"]
+        self.title: str = impl.to_dict()["snippet"]["title"]
+        self.url = f"https://youtube.com/playlist?list={self.id}"
+
+    def show(self) -> str:
+        return self.title
+
+    @property
+    def videos(self) -> list["YouTubeVideo"]:
+        return [YouTubeVideo(it) for it in self.client._impl.get_playlist_items(playlist_id=self.id, count=None).items]
+
+
+class YouTubeVideo(Show):
+    def __init__(self, impl: pyyoutube.PlaylistItem):
+        self.id: str = impl.to_dict()["snippet"]["resourceId"]["videoId"]
+        self.title: str = impl.to_dict()["snippet"]["title"]
+        self.url = f"https://www.youtube.com/watch?v={self.id}"
+
+    def show(self) -> str:
+        return self.title
+
+    def saturated_metadata(self, suggestion: DatabaseTrack) -> "TrackMetadata":
+        return TrackMetadata(
+            album=suggestion.album,
+            artists=suggestion.artists,
+            cover=suggestion.cover,
+            lyrics=suggestion.lyrics,
+            title=self.title,
+            year=suggestion.year,
+        )
+
+    def download(self, path: pathlib.Path) -> None:
+        with mytqdm(
+            ascii=".:",
+            desc="Receiving track",
+            total=1,
+            unit_divisor=1024,
+            unit_scale=True,
+            unit="B",
+        ) as bar:
+
+            def on_progress_callback(stream: pytube.Stream, chunk: bytes, bytes_remaining: int) -> None:
+                bar.n = min(bar.n + len(chunk), bar.total)
+                bar.refresh()
+
+            impl = (
+                pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
+                .streams.filter(mime_type="audio/mp4")
+                .order_by("abr")
+                .last()
+            )
+            bar.total = impl.filesize
+            bar.refresh()
+            impl.download(output_path=path.parent, filename=path.name)
+
+        converted = path.with_name(f"{path.name}-mp3")
+        ffmpeg_with_progress_bar(
+            bitrate=int(impl.abr.removesuffix("kbps")) * 1024,
+            ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
+            tqdm_ascii=".:",
+            tqdm_desc="Converting track format",
+        )
+        path.write_bytes(converted.read_bytes())
+
+
+#
 # Общее
 #
 
@@ -1501,14 +1653,14 @@ class TrackMetadata:
 
 
 def sync(
-    src_tracks: Sequence[VKontakteTrack | YandexMusicTrack],
+    src_tracks: Sequence[VKontakteTrack | YandexMusicTrack | YouTubeVideo],
     dest_folder: pathlib.Path,
     database: Database,
 ) -> None:
     """Односторонняя синхронизация папки с треками"""
     track_ids = {it.id for it in src_tracks}
     track_indices = {it.id: i for i, it in enumerate(src_tracks)}
-    uploaded_tracks = {it.stem.split("_")[-1]: it for it in dest_folder.glob("*.mp3")}
+    uploaded_tracks = {"_".join(it.stem.split("_")[1:]): it for it in dest_folder.glob("*.mp3")}
     missing_tracks = [it for it in src_tracks if it.id not in uploaded_tracks]
 
     def remove_extraneous_tracks() -> None:
@@ -1523,7 +1675,7 @@ def sync(
 
     def arrange_files() -> None:
         for it in dest_folder.glob("*.mp3"):
-            id_ = it.stem.split("_")[-1]
+            id_ = "_".join(it.stem.split("_")[1:])
             index = track_indices[id_]
 
             it.rename(it.with_stem(f"{index}_{id_}"))
@@ -1571,8 +1723,17 @@ def main() -> None:
 
         sync(tracks, MUSIC_FOLDER / "Яндекс Музыка", database)
 
+    def youtube_routine() -> None:
+        client = make_youtube_client(config)
+        user = client.user("/@user-vl2go8hx7e")
+        playlist = user.playlists[-1]
+        videos = playlist.videos
+
+        sync(videos, MUSIC_FOLDER / "YouTube", database)
+
     vkontakte_routine()
     yandex_music_routine()
+    youtube_routine()
 
 
 if __name__ == "__main__":
