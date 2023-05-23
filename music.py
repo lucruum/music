@@ -50,6 +50,7 @@ import ffpb  # type: ignore[import]
 import fp.fp  # type: ignore[import]
 import mutagen.id3
 import pytube  # type: ignore[import]
+import pytube.exceptions  # type: ignore[import]
 import pytube.extract  # type: ignore[import]
 import pytube.request  # type: ignore[import]
 import pyyoutube  # type: ignore[import]
@@ -1607,12 +1608,24 @@ class YouTubeVideo(Show):
                 bar.n = min(bar.n + len(chunk), bar.total)
                 bar.refresh()
 
-            impl = (
-                pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
-                .streams.filter(mime_type="audio/mp4")
-                .order_by("abr")
-                .last()
-            )
+            # Время от времени `streams` падает с ошибкой
+            # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
+            # (см. https://github.com/pytube/pytube/issues/1326)
+            # За неимением возможности изменить регулярное выражение `Cipher`'а
+            # (https://github.com/pytube/pytube/issues/1326#issuecomment-1144395745), пробуем
+            # получить поток, пока не удастся
+            while True:
+                try:
+                    impl = (
+                        pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
+                        .streams.filter(mime_type="audio/mp4")
+                        .order_by("abr")
+                        .last()
+                    )
+                except pytube.exceptions.RegexMatchError:
+                    pass
+                else:
+                    break
             bar.total = impl.filesize
             bar.refresh()
             impl.download(output_path=path.parent, filename=path.name)
