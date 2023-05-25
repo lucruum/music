@@ -1,6 +1,7 @@
-from types import NoneType, TracebackType
+from types import CodeType, NoneType, TracebackType
 from typing import (
     Any,
+    Callable,
     cast,
     Iterable,
     Iterator,
@@ -24,6 +25,7 @@ import difflib
 import functools
 import hashlib
 import html
+import inspect
 import json
 import os
 import pathlib
@@ -60,6 +62,51 @@ import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
 import ytmusicapi  # type: ignore[import]
+
+
+#
+# Патчи
+#
+
+
+def patch_pytube() -> None:
+    # См. https://github.com/pytube/pytube/issues/1326: `pytube.YouTube.streams` падает с ошибкой
+    # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
+    cipher_init_digest = hashlib.sha256(inspect.getsource(pytube.cipher.Cipher.__init__).encode()).hexdigest()
+    assert (
+        cipher_init_digest == "404c3367f2ce5b7df72b257c585c46777673f23f36d553dbb2ecb47362172b90"
+    ), "`pytube.cipher.Cipher.__init__` has been modified"
+    cipher_init_code = pytube.cipher.Cipher.__init__.__code__
+    patched_cipher_init_code_consts = cipher_init_code.co_consts[:1] + (r"^\$*\w+\W",) + cipher_init_code.co_consts[2:]
+    patch_function(pytube.cipher.Cipher.__init__, consts=patched_cipher_init_code_consts)
+
+
+def patch_function(
+    f: Callable,  # type: ignore[type-arg]
+    *,
+    codestring: bytes | None = None,
+    consts: tuple[object, ...] | None = None,
+) -> None:
+    f.__code__ = CodeType(
+        f.__code__.co_argcount,
+        f.__code__.co_posonlyargcount,
+        f.__code__.co_kwonlyargcount,
+        f.__code__.co_nlocals,
+        f.__code__.co_stacksize,
+        f.__code__.co_flags,
+        codestring if codestring is not None else f.__code__.co_code,
+        consts if consts is not None else f.__code__.co_consts,
+        f.__code__.co_names,
+        f.__code__.co_varnames,
+        f.__code__.co_filename,
+        f.__code__.co_name,
+        f.__code__.co_qualname,
+        f.__code__.co_firstlineno,
+        f.__code__.co_linetable,
+        f.__code__.co_exceptiontable,
+        f.__code__.co_freevars,
+        f.__code__.co_cellvars,
+    )
 
 
 #
@@ -1608,24 +1655,12 @@ class YouTubeVideo(Show):
                 bar.n = min(bar.n + len(chunk), bar.total)
                 bar.refresh()
 
-            # Время от времени `streams` падает с ошибкой
-            # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
-            # (см. https://github.com/pytube/pytube/issues/1326)
-            # За неимением возможности изменить регулярное выражение `Cipher`'а
-            # (https://github.com/pytube/pytube/issues/1326#issuecomment-1144395745), пробуем
-            # получить поток, пока не удастся
-            while True:
-                try:
-                    impl = (
-                        pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
-                        .streams.filter(mime_type="audio/mp4")
-                        .order_by("abr")
-                        .last()
-                    )
-                except pytube.exceptions.RegexMatchError:
-                    pass
-                else:
-                    break
+            impl = (
+                pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
+                .streams.filter(mime_type="audio/mp4")
+                .order_by("abr")
+                .last()
+            )
             bar.total = impl.filesize
             bar.refresh()
             impl.download(output_path=path.parent, filename=path.name)
@@ -1753,6 +1788,7 @@ if __name__ == "__main__":
     import pdb
 
     try:
+        patch_pytube()
         main()
     except Exception:
         print(traceback.format_exc())
