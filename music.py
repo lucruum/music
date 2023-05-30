@@ -476,7 +476,6 @@ def read_char_unbuffered() -> str:
 
 def ffmpeg_with_progress_bar(
     *,
-    bitrate: float,
     ffmpeg_args: list[str],
     tqdm_ascii: bool | str | None = None,
     tqdm_desc: str | None = None,
@@ -485,6 +484,8 @@ def ffmpeg_with_progress_bar(
     Запускает ffmpeg с аргументами `ffmpeg_args` и отображает прогресс выполнения команды
     Параметры tqdm'а сильно ограничены ввиду чрезмерной хрупкости кода
     """
+
+    bitrate = 1.0
 
     class Bar(tqdm.tqdm):  # type: ignore[type-arg]
         def __init__(self, **kwargs: dict[str, Any]):
@@ -550,6 +551,12 @@ def ffmpeg_with_progress_bar(
         while True:
             if stream := process.stderr:
                 if data := stream.read(1):
+                    # Битрейт может меняться от фрагмента к фрагменту,
+                    # поэтому ищем значение битрейта в каждой строке вывода ffmpeg'а - это актуально
+                    # при скачивании треков из ВКонтакте и конвертировании mp4 в mp3
+                    if data in b"\r\n":
+                        if found := re.search(r"bitrate=\s*(.+?)kbits/s", notifier.line_acc.decode()):
+                            bitrate = float(found.group(1)) * 1024
                     notifier(data)
                 elif process.poll() is not None:
                     break
@@ -1402,7 +1409,6 @@ class VKontakteTrack(Show):
 
     def download(self, path: pathlib.Path) -> None:
         ffmpeg_with_progress_bar(
-            bitrate=320 * 1024,
             ffmpeg_args=["-http_persistent", "false", "-i", self._url, "-codec", "copy", str(path)],
             tqdm_ascii=".:",
             tqdm_desc="Receiving track",
@@ -1667,7 +1673,6 @@ class YouTubeVideo(Show):
 
         converted = path.with_name(f"{path.name}-mp3")
         ffmpeg_with_progress_bar(
-            bitrate=int(impl.abr.removesuffix("kbps")) * 1024,
             ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
             tqdm_ascii=".:",
             tqdm_desc="Converting track format",
