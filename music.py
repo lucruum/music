@@ -827,43 +827,43 @@ class DatabaseTrack:
     @property
     def album(self) -> str:
         for it in self._matches:
-            if it is not None and it.album:
-                return it.album
+            if result := it is not None and it.album:
+                return result
         return ""
 
     @property
     def artists(self) -> str:
         for it in self._matches:
-            if it is not None and it.artists:
-                return it.artists
+            if result := it is not None and it.artists:
+                return result
         return ""
 
     @property
     def cover(self) -> bytes:
         for it in self._matches:
-            if it is not None and it.cover:
-                return it.cover
+            if result := it is not None and it.cover:
+                return result
         return b""
 
     @property
     def lyrics(self) -> str:
         for it in self._matches:
-            if it is not None and it.lyrics:
-                return it.lyrics
+            if result := it is not None and it.lyrics:
+                return result
         return ""
 
     @property
     def title(self) -> str:
         for it in self._matches:
-            if it is not None and it.title:
-                return it.title
+            if result := it is not None and it.title:
+                return result
         return ""
 
     @property
     def year(self) -> str:
         for it in self._matches:
-            if it is not None and it.year:
-                return it.year
+            if result := it is not None and it.year:
+                return result
         return ""
 
 
