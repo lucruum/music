@@ -92,6 +92,29 @@ def patch_pytube() -> None:
     )
 
 
+def patch_vk_api() -> None:
+    # Примерно с 06.06.2023 vk_api начал падать с ошибкой `vk_api.exceptions.AuthError: Unknown API auth error`
+    # Может быть, это связано с недавними падениями - не знаю
+    vk_api_api_login_source_digest = hashlib.sha256(inspect.getsource(vk_api.VkApi._api_login).encode()).hexdigest()
+    assert (
+        vk_api_api_login_source_digest == "8e7bcf1f09faa02effcd47c0637b372ce149717a88d7e0799d1bd9dd63025bfc"
+    ), "`vk_api.VkApi._api_login` source has been modified"
+    monkey_patch(
+        vk_api.VkApi._api_login,
+        """\
+@@ -16,6 +16,9 @@
+         }
+     )
+
++    if 'redirect_uri' in response.url:
++        response.url = input(f'Enter authorization data {response.url}: ')
++
+     if 'act=blocked' in response.url:
+         raise AccountBlocked('Account is blocked')
+""",
+    )
+
+
 def monkey_patch(f: Callable[..., Any], patch: str) -> None:
     """Применяет unified-патч к исходному коду"""
     source = inspect.getsource(f)
@@ -1864,6 +1887,7 @@ if __name__ == "__main__":
 
     try:
         patch_pytube()
+        patch_vk_api()
         main()
     except Exception:
         print(traceback.format_exc())
