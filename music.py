@@ -1,4 +1,4 @@
-from types import CodeType, NoneType, TracebackType
+from types import NoneType, TracebackType
 from typing import (
     Any,
     Callable,
@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import traceback
 import uuid
@@ -72,41 +73,33 @@ import ytmusicapi  # type: ignore[import]
 def patch_pytube() -> None:
     # См. https://github.com/pytube/pytube/issues/1326: `pytube.YouTube.streams` падает с ошибкой
     # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
-    cipher_init_digest = hashlib.sha256(inspect.getsource(pytube.cipher.Cipher.__init__).encode()).hexdigest()
+    cipher_init_source_digest = hashlib.sha256(inspect.getsource(pytube.cipher.Cipher.__init__).encode()).hexdigest()
     assert (
-        cipher_init_digest == "404c3367f2ce5b7df72b257c585c46777673f23f36d553dbb2ecb47362172b90"
-    ), "`pytube.cipher.Cipher.__init__` has been modified"
-    cipher_init_code = pytube.cipher.Cipher.__init__.__code__
-    patched_cipher_init_code_consts = cipher_init_code.co_consts[:1] + (r"^\$*\w+\W",) + cipher_init_code.co_consts[2:]
-    patch_function(pytube.cipher.Cipher.__init__, consts=patched_cipher_init_code_consts)
-
-
-def patch_function(
-    f: Callable,  # type: ignore[type-arg]
-    *,
-    codestring: bytes | None = None,
-    consts: tuple[object, ...] | None = None,
-) -> None:
-    f.__code__ = CodeType(
-        f.__code__.co_argcount,
-        f.__code__.co_posonlyargcount,
-        f.__code__.co_kwonlyargcount,
-        f.__code__.co_nlocals,
-        f.__code__.co_stacksize,
-        f.__code__.co_flags,
-        codestring if codestring is not None else f.__code__.co_code,
-        consts if consts is not None else f.__code__.co_consts,
-        f.__code__.co_names,
-        f.__code__.co_varnames,
-        f.__code__.co_filename,
-        f.__code__.co_name,
-        f.__code__.co_qualname,
-        f.__code__.co_firstlineno,
-        f.__code__.co_linetable,
-        f.__code__.co_exceptiontable,
-        f.__code__.co_freevars,
-        f.__code__.co_cellvars,
+        cipher_init_source_digest == "404c3367f2ce5b7df72b257c585c46777673f23f36d553dbb2ecb47362172b90"
+    ), "`pytube.cipher.Cipher.__init__` source has been modified"
+    monkey_patch(
+        pytube.cipher.Cipher.__init__,
+        r"""\
+@@ -1,6 +1,6 @@
+ def __init__(self, js: str):
+     self.transform_plan: List[str] = get_transform_plan(js)
+-    var_regex = re.compile(r"^\w+\W")
++    var_regex = re.compile(r"^\$*\w+\W")
+     var_match = var_regex.search(self.transform_plan[0])
+     if not var_match:
+         raise RegexMatchError(
+""",
     )
+
+
+def monkey_patch(f: Callable[..., Any], patch: str) -> None:
+    """Применяет unified-патч к исходному коду"""
+    source = inspect.getsource(f)
+    modified_source = apply(textwrap.dedent(source), patch)
+    modified_code = compile(modified_source, "<string>", "exec")
+    module: dict[str, Any] = {}
+    exec(modified_code, module)
+    f.__code__ = module[f.__name__].__code__
 
 
 #
@@ -169,6 +162,83 @@ def flatten(obj: Any) -> Iterator[Any]:
             yield from flatten(it)
         else:
             yield it
+
+
+# Диапазоны hunk'ов в unified-формате
+HUNK_RANGE_RE = re.compile(r"^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@$")
+
+
+def apply(original: str, patch: str) -> str:
+    """
+    Применяет unified-патч к строке
+
+    `apply` не добавляет символ новой строки в конец строки ("\\ No new line at end of file" игнорируется)
+    """
+    # Почитать о структуре hunk'ов можно здесь: https://en.wikipedia.org/wiki/Diff#Unified_format
+    result = original.splitlines(True)
+    offset = 0
+    start = 0
+    for it in patch.splitlines(True):
+        if it.startswith(("---", "+++")):
+            pass
+        elif it.startswith("@@"):
+            match = re.match(HUNK_RANGE_RE, it)
+            if match is None:
+                raise ValueError("invalid hunk range")
+            # Есть два файла:
+            #
+            #   $ cat original                         $ cat new
+            #   Я так давно родился,                   Я так давно родился,
+            #   Что слышу иногда,                      Что слышу иногда,
+            #   Как надо мной проходит                 Как надо мной проходит
+            #   Студеная вода.                         Студеная вода.
+            #
+            #                                          (с) Арсений Тарковский
+            #
+            # Обращаем внимание, что несмотря на разное количество контекстных строк,
+            # оба изменения начинаются с 4-ой строки:
+            #
+            #   $ diff original new --unified=0        $ diff original new --unified=1
+            #   --- original                           --- original
+            #   +++ new                                +++ new
+            #   @@ -4,0 +5,2 @@                        @@ -4 +4,3 @@
+            #   +                                       Студеная вода.
+            #   +(с) Арсений Тарковский                +
+            #                                          +(с) Арсений Тарковский
+            #
+            # Если не прибавить единичку к `start`'у, когда количество изменённых строк в оригинальном файле
+            # равно нулю (`match.group(2)`), патч будет применён неправильно
+            start = int(match.group(1)) - 1 + (1 if match.group(2) == ",0" else 0)
+        # Думаю, что подавляющее количество патчей будут заданы многострочными литералами строки в исходном коде
+        # Значимые конечные пробелы патча могут быть случайно удалены командой Trim Trailing Whitespace редактора
+        # А если и не будут удалены, то вызовут предупреждение flake'а "W293 blank line contains whitespace"
+        # Поэтому воспринимаем переход на новую строку как пустую контекстную строку (' \n')
+        elif it.startswith((" ", "\n")):
+            if result[start + offset] != it.removeprefix(" "):
+                raise ValueError(
+                    "invalid hunk: line {}: got {!r}, expected {!r}".format(
+                        start + 1,
+                        result[start + offset],
+                        it.removeprefix(" "),
+                    )
+                )
+            start += 1
+        elif it.startswith("-"):
+            if result[start + offset] != it.removeprefix("-"):
+                raise ValueError(
+                    "invalid hunk: line {}: got {!r}, expected {!r}".format(
+                        start + 1,
+                        result[start + offset],
+                        it.removeprefix("-"),
+                    )
+                )
+            del result[start + offset]
+            offset -= 1
+            start += 1
+        elif it.startswith("+"):
+            result.insert(start + offset, it.removeprefix("+"))
+            offset += 1
+    return "".join(result)
 
 
 #
