@@ -1263,20 +1263,26 @@ class _VKontakteUserTracks:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
 
-            for wrappee in tqdm.tqdm(
-                vk_api.audio.scrap_tracks(
+            with tqdm.tqdm(
+                ascii=".:",
+                desc="Fetching tracks",
+                disable=len(missing_hashes) == 0,
+                initial=len(all_tracks) - len(unavailable_only_tracks) - len(missing_hashes),
+                total=len(all_tracks),
+            ) as bar:
+                for wrappee in vk_api.audio.scrap_tracks(
                     missing_hashes,
                     int(self._user._client.id),
                     self._user._client._audio._vk.http,
                     convert_m3u8_links=self._user._client._audio.convert_m3u8_links,
-                ),
-                ascii=".:",
-                desc="Fetching tracks",
-                disable=len(missing_hashes) == 0,
-                total=len(missing_hashes),
-            ):
-                track = VKontakteTrack(wrappee)
-                self._user._client._cache["user_tracks"][self._user.id][track.id] = track
+                ):
+                    track = VKontakteTrack(wrappee)
+                    self._user._client._cache["user_tracks"][self._user.id][track.id] = track
+                    bar.update()
+                # Индикатор выполнения может не до конца заполниться из-за наличия недоступных треков
+                if bar.n != len(all_tracks):
+                    bar.ascii = (f"{colorama.Fore.LIGHTRED_EX}:{colorama.Style.RESET_ALL}", ":")
+                    bar.refresh()
 
         for it in unavailable_only_tracks:
             track = VKontakteTrack(
