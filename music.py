@@ -3,20 +3,12 @@ from typing import (
     Any,
     Callable,
     cast,
-    Iterable,
     Iterator,
-    Mapping,
-    NoReturn,
     Optional,
-    overload,
     Sequence,
-    TYPE_CHECKING,
     Type,
     TypeVar,
 )
-
-if TYPE_CHECKING:
-    from _typeshed import SupportsWrite
 
 import abc
 import atexit
@@ -59,6 +51,7 @@ import pytube.request  # type: ignore[import]
 import pyyoutube  # type: ignore[import]
 import requests
 import tqdm
+import tqdm.utils
 import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
@@ -85,6 +78,49 @@ def patch_pytube() -> None:
      var_match = var_regex.search(self.transform_plan[0])
      if not var_match:
          raise RegexMatchError(
+""",
+    )
+
+
+def patch_tqdm() -> None:
+    """
+    На Windows tqdm некорректно определяет ширину бара при `ncols=None`: возвращается значение,
+    меньшее ожидаемого на 1, из-за чего
+
+        for it in tqdm.tqdm(...):
+            if ...:
+                print("Go bananas")
+
+    выводит
+
+        Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]G
+        o bananas
+
+    В то время как на Linux
+
+        Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]
+        Go bananas
+
+    tqdm вычисляет ширину терминала как разницу координат правой и левой сторон:
+        https://github.com/tqdm/tqdm/blob/6791e8c5b3d6c30bdd2060c346996bfb5a6f10d1/tqdm/utils.py#L264
+        https://learn.microsoft.com/en-us/windows/console/console-screen-buffer-info-str, см. srWindow
+
+    Для сравнения, в CPython ширина определяется как разница координат плюс 1:
+        https://github.com/python/cpython/blob/5a2b984568f72f0d7ff7c7b4ee8ce31af9fd1b7e/Modules/posixmodule.c#L13473
+    """
+    monkey_patch(
+        tqdm.utils._screen_shape_windows,  # type: ignore[attr-defined]
+        "585e19a361bbf8f3fbe1ba7fffd7ccb6a2baab8a697e28d1ca28af26",
+        """\
+@@ -16,7 +16,7 @@
+         if res:
+             (_bufx, _bufy, _curx, _cury, _wattr, left, top, right, bottom,
+              _maxx, _maxy) = struct.unpack("hhhhHhhhhhh", csbi.raw)
+-            return right - left, bottom - top  # +1
++            return right - left + 1, bottom - top + 1
+     except Exception:  # nosec
+         pass
+     return None, None
 """,
     )
 
@@ -126,8 +162,7 @@ def monkey_patch(f: Callable[..., Any], old_source_digest: str, patch: str) -> N
 #
 
 
-if TYPE_CHECKING:
-    T = TypeVar("T")
+T = TypeVar("T")
 
 
 #
@@ -386,138 +421,6 @@ class Status:
         print(f"\r{output}{padding}", end="", flush=True)
 
 
-if TYPE_CHECKING:
-
-    @overload
-    def mytqdm(
-        iterable: Iterable[T],
-        desc: str | None = ...,
-        total: float | None = ...,
-        leave: bool | None = ...,
-        file: SupportsWrite[str] | None = ...,
-        ncols: int | None = ...,
-        mininterval: float = ...,
-        maxinterval: float = ...,
-        miniters: float | None = ...,
-        ascii: bool | str | None = ...,
-        disable: bool | None = ...,
-        unit: str = ...,
-        unit_scale: bool | float = ...,
-        dynamic_ncols: bool = ...,
-        smoothing: float = ...,
-        bar_format: str | None = ...,
-        initial: float = ...,
-        position: int | None = ...,
-        postfix: Mapping[str, object] | str | None = ...,
-        unit_divisor: float = ...,
-        write_bytes: bool | None = ...,
-        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
-        nrows: int | None = ...,
-        colour: str | None = ...,
-        delay: float | None = ...,
-        gui: bool = ...,
-        **kwargs: dict[str, Any],
-    ) -> tqdm.tqdm[T]:
-        ...
-
-    @overload
-    def mytqdm(
-        iterable: None = ...,
-        desc: str | None = ...,
-        total: float | None = ...,
-        leave: bool | None = ...,
-        file: SupportsWrite[str] | None = ...,
-        ncols: int | None = ...,
-        mininterval: float = ...,
-        maxinterval: float = ...,
-        miniters: float | None = ...,
-        ascii: bool | str | None = ...,
-        disable: bool | None = ...,
-        unit: str = ...,
-        unit_scale: bool | float = ...,
-        dynamic_ncols: bool = ...,
-        smoothing: float = ...,
-        bar_format: str | None = ...,
-        initial: float = ...,
-        position: int | None = ...,
-        postfix: Mapping[str, object] | str | None = ...,
-        unit_divisor: float = ...,
-        write_bytes: bool | None = ...,
-        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
-        nrows: int | None = ...,
-        colour: str | None = ...,
-        delay: float | None = ...,
-        gui: bool = ...,
-        **kwargs: dict[str, Any],
-    ) -> tqdm.tqdm[NoReturn]:
-        ...
-
-    def mytqdm(
-        iterable: Iterable[T] | None = ...,
-        desc: str | None = ...,
-        total: float | None = ...,
-        leave: bool | None = ...,
-        file: SupportsWrite[str] | None = ...,
-        ncols: int | None = ...,
-        mininterval: float = ...,
-        maxinterval: float = ...,
-        miniters: float | None = ...,
-        ascii: bool | str | None = ...,
-        disable: bool | None = ...,
-        unit: str = ...,
-        unit_scale: bool | float = ...,
-        dynamic_ncols: bool = ...,
-        smoothing: float = ...,
-        bar_format: str | None = ...,
-        initial: float = ...,
-        position: int | None = ...,
-        postfix: Mapping[str, object] | str | None = ...,
-        unit_divisor: float = ...,
-        write_bytes: bool | None = ...,
-        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
-        nrows: int | None = ...,
-        colour: str | None = ...,
-        delay: float | None = ...,
-        gui: bool = ...,
-        **kwargs: dict[str, Any],
-    ) -> tqdm.tqdm[T | NoReturn]:
-        ...
-
-else:
-
-    def mytqdm(*args, **kwargs):
-        """
-        На Windows tqdm некорректно определяет ширину бара при `ncols=None`: возвращается значение,
-        меньшее ожидаемого на 1, из-за чего
-
-            for it in tqdm.tqdm(...):
-                if ...:
-                    print("Go bananas")
-
-        выводит
-
-            Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]G
-            o bananas
-
-        В то время как на Linux
-
-            Buzzing on Fuzzing:  70%|██▊ | 7/10 [00:18<00:08,  2.67s/it]
-            Go bananas
-
-        tqdm вычисляет ширину терминала как разницу координат правой и левой сторон:
-            https://github.com/tqdm/tqdm/blob/6791e8c5b3d6c30bdd2060c346996bfb5a6f10d1/tqdm/utils.py#L264
-            https://learn.microsoft.com/en-us/windows/console/console-screen-buffer-info-str, см. srWindow
-
-        Для сравнения, в CPython ширина определяется как разница координат плюс 1:
-            https://github.com/python/cpython/blob/5a2b984568f72f0d7ff7c7b4ee8ce31af9fd1b7e/Modules/posixmodule.c#L13473
-        """
-        if len(args) >= 6 and args[5] is None:
-            args[5] = os.get_terminal_size()[0]
-        if "ncols" not in kwargs or kwargs["ncols"] is None:
-            kwargs["ncols"] = os.get_terminal_size()[0]
-        return tqdm.tqdm(*args, **kwargs)
-
-
 def read_password(prompt: str = "") -> str:
     """Ввод пароля с заменой выводимых символов на звёздочки"""
     # См. https://github.com/asweigart/pwinput/blob/9336b861fca3de3fe82a7ced6e80c2fdb0c53abb/src/pwinput/__init__.py#L48
@@ -584,8 +487,6 @@ def ffmpeg_with_progress_bar(
             super().__init__(
                 ascii=tqdm_ascii,
                 desc=tqdm_desc,
-                # См. комментарий к `mytqdm`
-                ncols=os.get_terminal_size()[0],
                 total=kwargs["total"],
                 # См. `Bar.format_meter`
                 unit_divisor=1024,
@@ -1362,7 +1263,7 @@ class _VKontakteUserTracks:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
 
-            for wrappee in mytqdm(
+            for wrappee in tqdm.tqdm(
                 vk_api.audio.scrap_tracks(
                     missing_hashes,
                     int(self._user._client.id),
@@ -1448,7 +1349,7 @@ class VKontakteWall:
         result: list[VKontaktePost] = []
         n_posts = self._client._api.wall.get(owner_id=self.owner_id)["count"]
 
-        with mytqdm(
+        with tqdm.tqdm(
             ascii=".:",
             desc="Fetching posts",
             total=n_posts,
@@ -1661,7 +1562,7 @@ class YandexMusicTrack(Show):
             response = requests.get(url, stream=True)
             length = int(response.headers["content-length"])
 
-            with mytqdm(
+            with tqdm.tqdm(
                 ascii=".:",
                 desc="Receiving track",
                 total=length,
@@ -1770,7 +1671,7 @@ class YouTubeVideo(Show):
 
     def download(self, path: pathlib.Path) -> None:
         try:
-            with mytqdm(
+            with tqdm.tqdm(
                 ascii=".:",
                 desc="Receiving track",
                 total=1,
@@ -1929,6 +1830,7 @@ if __name__ == "__main__":
 
     try:
         patch_pytube()
+        patch_tqdm()
         patch_vk_api()
         main()
     except Exception:
