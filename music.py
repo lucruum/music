@@ -320,6 +320,7 @@ def fit(s: str, width: int, placeholder: str = "...") -> str:
 def markup(s: str) -> str:
     """Стилизация текста при помощи Markdown-разметки"""
     s = re.sub("`(.*?)`", rf"{colorama.Fore.LIGHTYELLOW_EX}\1{colorama.Style.RESET_ALL}", s)
+    s = re.sub(r"\*\*(.*?)\*\*", rf"{colorama.Fore.LIGHTRED_EX}\1{colorama.Style.RESET_ALL}", s)
     s = re.sub(r"\*(.*?)\*", rf"{colorama.Fore.LIGHTBLACK_EX}\1{colorama.Style.RESET_ALL}", s)
     return s
 
@@ -1352,13 +1353,15 @@ class _VKontakteUserTracks:
         self._user = user
 
     def __iter__(self) -> Iterator["VKontakteTrack"]:
-        hashes = self._hashes()
+        all_tracks, available_only_tracks, unavailable_only_tracks = self._tracks()
 
         missing_hashes = []
-        for it in hashes:
-            id_ = "".join(it[:2])
+        for it in available_only_tracks:
+            id_ = f"{it[1]}{it[0]}"
             if id_ not in self._user._client._cache["user_tracks"][self._user.id]:
-                missing_hashes.append(it)
+                hashes = it[13].split("/")
+                full_id = (str(it[1]), str(it[0]), hashes[2], hashes[5])
+                missing_hashes.append(full_id)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
@@ -1378,12 +1381,27 @@ class _VKontakteUserTracks:
                 track = VKontakteTrack(wrappee)
                 self._user._client._cache["user_tracks"][self._user.id][track.id] = track
 
-        for it in hashes:
-            id_ = "".join(it[:2])
+        for it in unavailable_only_tracks:
+            track = VKontakteTrack(
+                {
+                    "artist": it[4],
+                    "id": it[0],
+                    "owner_id": it[1],
+                    "title": it[3],
+                    "track_covers": [],
+                    "url": "",
+                }
+            )
+            self._user._client._cache["user_tracks"][self._user.id][track.id] = track
+
+        for it in all_tracks:
+            id_ = f"{it[1]}{it[0]}"
             yield self._user._client._cache["user_tracks"][self._user.id][id_]
 
-    def _hashes(self) -> list[tuple[str, str, str, str]]:
-        result = []
+    def _tracks(self) -> tuple[list[Any], list[Any], list[Any]]:
+        all_tracks = []
+        available_only_tracks = []
+        unavailable_only_tracks = []
 
         # См. vk_api/audio.py:VkAudio.get_iter
         offset = 0
@@ -1403,16 +1421,25 @@ class _VKontakteUserTracks:
             ).json()
 
             if not response["data"][0]:
-                return []
+                return [], [], []
 
-            result.extend(vk_api.audio.scrap_ids(response["data"][0]["list"]))
+            # См. vk_api/audio.py:VkAudio.scrap_ids: `scrap_ids` пропускает недоступные треки,
+            # поэтому мы его не используем
+            for it in response["data"][0]["list"]:
+                hashes = it[13].split("/")
+                full_id = (str(it[1]), str(it[0]), hashes[2], hashes[5])
+                all_tracks.append(it)
+                if all(full_id):
+                    available_only_tracks.append(it)
+                else:
+                    unavailable_only_tracks.append(it)
 
             if response["data"][0]["hasMore"]:
                 offset += vk_api.audio.TRACKS_PER_USER_PAGE
             else:
                 break
 
-        return result
+        return all_tracks, available_only_tracks, unavailable_only_tracks
 
 
 class VKontakteWall:
@@ -1501,6 +1528,8 @@ class VKontakteTrack(Show):
         )
 
     def download(self, path: pathlib.Path) -> None:
+        if not self._url:
+            raise TrackNotAvailable("not available")
         ffmpeg_with_progress_bar(
             ffmpeg_args=["-http_persistent", "false", "-i", self._url, "-codec", "copy", str(path)],
             tqdm_ascii=".:",
@@ -1631,21 +1660,24 @@ class YandexMusicTrack(Show):
         )
 
     def download(self, path: pathlib.Path) -> None:
-        url = self._impl.get_download_info()[0].get_direct_link()
-        response = requests.get(url, stream=True)
-        length = int(response.headers["content-length"])
+        try:
+            url = self._impl.get_download_info()[0].get_direct_link()
+            response = requests.get(url, stream=True)
+            length = int(response.headers["content-length"])
 
-        with mytqdm(
-            ascii=".:",
-            desc="Receiving track",
-            total=length,
-            unit_divisor=1024,
-            unit_scale=True,
-            unit="B",
-        ) as bar:
-            with path.open("wb") as file:
-                for data in response.iter_content(chunk_size=1024):
-                    bar.update(file.write(data))
+            with mytqdm(
+                ascii=".:",
+                desc="Receiving track",
+                total=length,
+                unit_divisor=1024,
+                unit_scale=True,
+                unit="B",
+            ) as bar:
+                with path.open("wb") as file:
+                    for data in response.iter_content(chunk_size=1024):
+                        bar.update(file.write(data))
+        except yandex_music.exceptions.UnauthorizedError as e:
+            raise TrackNotAvailable("not available") from e
 
 
 #
@@ -1741,41 +1773,52 @@ class YouTubeVideo(Show):
         )
 
     def download(self, path: pathlib.Path) -> None:
-        with mytqdm(
-            ascii=".:",
-            desc="Receiving track",
-            total=1,
-            unit_divisor=1024,
-            unit_scale=True,
-            unit="B",
-        ) as bar:
+        try:
+            with mytqdm(
+                ascii=".:",
+                desc="Receiving track",
+                total=1,
+                unit_divisor=1024,
+                unit_scale=True,
+                unit="B",
+            ) as bar:
 
-            def on_progress_callback(stream: pytube.Stream, chunk: bytes, bytes_remaining: int) -> None:
-                bar.n = min(bar.n + len(chunk), bar.total)
+                def on_progress_callback(stream: pytube.Stream, chunk: bytes, bytes_remaining: int) -> None:
+                    bar.n = min(bar.n + len(chunk), bar.total)
+                    bar.refresh()
+
+                impl = (
+                    pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
+                    .streams.filter(mime_type="audio/mp4")
+                    .order_by("abr")
+                    .last()
+                )
+                bar.total = impl.filesize
                 bar.refresh()
+                impl.download(output_path=path.parent, filename=path.name)
 
-            impl = (
-                pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
-                .streams.filter(mime_type="audio/mp4")
-                .order_by("abr")
-                .last()
+            converted = path.with_name(f"{path.name}-mp3")
+            ffmpeg_with_progress_bar(
+                ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
+                tqdm_ascii=".:",
+                tqdm_desc="Converting track format",
             )
-            bar.total = impl.filesize
-            bar.refresh()
-            impl.download(output_path=path.parent, filename=path.name)
-
-        converted = path.with_name(f"{path.name}-mp3")
-        ffmpeg_with_progress_bar(
-            ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
-            tqdm_ascii=".:",
-            tqdm_desc="Converting track format",
-        )
-        path.write_bytes(converted.read_bytes())
+            path.write_bytes(converted.read_bytes())
+        except pytube.exceptions.AgeRestrictedError as e:
+            # Заменяем идентификатор видео на "this video"
+            cause = "this video " + " ".join(str(e).split()[1:])
+            raise TrackNotAvailable(cause) from e
+        except pytube.exceptions.VideoPrivate as e:
+            raise TrackNotAvailable("this video is private") from e
 
 
 #
 # Общее
 #
+
+
+class TrackNotAvailable(Exception):
+    pass
 
 
 class TrackMetadata:
@@ -1834,10 +1877,13 @@ def sync(
             index = track_indices[id_]
 
             write(f"[*{n_downloaded + i + 1}*/*{n_downloaded + len(missing_tracks)}*] Downloading `{it}`")
-            with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
-                it.download(tmp_path)
-                with Status("Embedding metadata"):
-                    it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
+            try:
+                with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
+                    it.download(tmp_path)
+                    with Status("Embedding metadata"):
+                        it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
+            except TrackNotAvailable as e:
+                write(f"**Failed to download:** {e}")
 
     remove_extraneous_tracks()
     arrange_files()
