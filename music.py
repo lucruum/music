@@ -73,12 +73,9 @@ import ytmusicapi  # type: ignore[import]
 def patch_pytube() -> None:
     # См. https://github.com/pytube/pytube/issues/1326: `pytube.YouTube.streams` падает с ошибкой
     # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
-    cipher_init_source_digest = hashlib.sha256(inspect.getsource(pytube.cipher.Cipher.__init__).encode()).hexdigest()
-    assert (
-        cipher_init_source_digest == "404c3367f2ce5b7df72b257c585c46777673f23f36d553dbb2ecb47362172b90"
-    ), "`pytube.cipher.Cipher.__init__` source has been modified"
     monkey_patch(
         pytube.cipher.Cipher.__init__,
+        "707c7d6b7c06938f16a8cff7ecc707b235245f1db0f0d3eb8d1e2002",
         r"""\
 @@ -1,6 +1,6 @@
  def __init__(self, js: str):
@@ -95,12 +92,9 @@ def patch_pytube() -> None:
 def patch_vk_api() -> None:
     # Примерно с 06.06.2023 vk_api начал падать с ошибкой `vk_api.exceptions.AuthError: Unknown API auth error`
     # Может быть, это связано с недавними падениями - не знаю
-    vk_api_api_login_source_digest = hashlib.sha256(inspect.getsource(vk_api.VkApi._api_login).encode()).hexdigest()
-    assert (
-        vk_api_api_login_source_digest == "8e7bcf1f09faa02effcd47c0637b372ce149717a88d7e0799d1bd9dd63025bfc"
-    ), "`vk_api.VkApi._api_login` source has been modified"
     monkey_patch(
         vk_api.VkApi._api_login,
+        "6b67e4eaee01e627cda4d227f0956712be83e552b83415d76f9f4a94",
         """\
 @@ -16,6 +16,9 @@
          }
@@ -115,9 +109,11 @@ def patch_vk_api() -> None:
     )
 
 
-def monkey_patch(f: Callable[..., Any], patch: str) -> None:
+def monkey_patch(f: Callable[..., Any], old_source_digest: str, patch: str) -> None:
     """Применяет unified-патч к исходному коду"""
     source = inspect.getsource(f)
+    source_digest = hashlib.sha224(source.encode()).hexdigest()
+    assert old_source_digest == source_digest, f"`{f.__name__}` source has been modified"
     modified_source = apply(textwrap.dedent(source), patch)
     modified_code = compile(modified_source, "<string>", "exec")
     module: dict[str, Any] = {}
