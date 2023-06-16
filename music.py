@@ -18,6 +18,7 @@ import functools
 import hashlib
 import html
 import inspect
+import itertools
 import json
 import os
 import pathlib
@@ -28,8 +29,8 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import traceback
+import urllib.parse
 import uuid
 import warnings
 
@@ -39,10 +40,12 @@ else:
     import termios
     import tty
 
+# grequests следует импортировать перед requests: https://github.com/spyoungtech/grequests/issues/103
+import grequests  # type: ignore[import]
+
 import bs4
 import colorama
 import ffpb  # type: ignore[import]
-import fp.fp  # type: ignore[import]
 import mutagen.id3
 import pytube  # type: ignore[import]
 import pytube.exceptions  # type: ignore[import]
@@ -596,74 +599,95 @@ def atomic_path(path: pathlib.Path, suffix: str = "") -> Iterator[pathlib.Path]:
 #
 
 
-__proxy = ""
+class ProxiedRequests:
+    """Выполнение запросов из-под прокси-сервера"""
 
+    def __init__(self) -> None:
+        # Всё же поиск рабочих прокси-серверов - долгая операция,
+        # так что запоминаем их адреса и используем повторно
+        self._netloc_proxies: dict[str, str] = {}
 
-def proxy() -> str:
-    """Адрес прокси-сервера"""
-    if not __proxy:
-        next_proxy()
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        stream: bool | None = None,
+        timeout: float | None = None,
+    ) -> requests.Response:
+        return self.request("get", url, params=params, stream=stream, timeout=timeout)
 
-    return __proxy
-
-
-def next_proxy() -> None:
-    """Получение нового адреса прокси-сервера"""
-    global __proxy
-
-    while True:
-        with Status("Searching for proxy server") as status:
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        stream: bool | None = None,
+        timeout: float | None = None,
+    ) -> requests.Response:
+        netloc = urllib.parse.urlparse(url)[1]
+        if netloc in self._netloc_proxies:
             try:
-                # Перемешиваем список прокси-серверов, чтобы не попасть в бесконечный цикл
-                __proxy = fp.fp.FreeProxy(rand=True, timeout=1).get()
-            except fp.errors.FreeProxyException:
-                status.fail("not found")
-                continue
-
-        # Проверка ответа сервера
-        with Status(f"Trying to connect to `{__proxy}`") as status:
-            try:
-                response = requests.get(
-                    "https://f4.bcbits.com/img/a1056493284_10.jpg",
-                    proxies={"https": __proxy},
-                    timeout=1,
+                proxy = self._netloc_proxies[netloc]
+                return requests.request(
+                    method,
+                    url,
+                    params=params,
+                    proxies={"http": proxy, "https": proxy},
+                    stream=stream,
+                    timeout=timeout,
                 )
-                actual_hashsum = hashlib.sha256(response.content).hexdigest()
-                expected_hashsum = "f9e2c765115cfc602faace1485f86c3507d8e246471cf126dcd0b647df04368f"
-                if actual_hashsum != expected_hashsum:
-                    status.fail("invalid server response")
-                    continue
-            except requests.exceptions.RequestException as e:
-                status.fail(str(e))
-                continue
+            except Exception:
+                pass
 
-        # Проверка скорости соединения
-        with Status("Testing connection speed") as status:
-            try:
-                start = time.perf_counter()
-                response = requests.get(
-                    "http://ipv4.download.thinkbroadband.com:80/2MB.zip",
-                    proxies={"http": __proxy},
-                    stream=True,
-                    timeout=1,
+        # Первым порывом во время рефакторинга будет удаление цикла и
+        # превращение `requests_` в бесконечный генератор `(grequests.request(...) for proxy in self._proxies())`
+        # Такой код приведёт к проблемам с SSL-сертификатами: после выхода из функции greenlet-потоки,
+        # лежащие в основе grequests, продолжат делать запросы несмотря на то, что ассоциирующийся с ними генератор умер
+        proxies = self._proxies()
+        while True:
+            # Количество одновременно выполняемых запросов
+            # Значение 128 взято с потолка - оно не должно быть слишком маленьким, чтобы скорость метода
+            # была на хорошем уровне, но и не должно быть слишком большим, чтобы не попасть в ловушку,
+            # описанную комментарием выше
+            size = 128
+            requests_ = (
+                grequests.request(
+                    method,
+                    url,
+                    # `grequests.imap` возвращает ответы в неупорядоченном виде,
+                    # поэтому добавляем адрес прокси-сервера в заголовки,
+                    # чтобы позже иметь возможность восстановить его
+                    headers={"proxy": proxy},
+                    params=params,
+                    proxies={"http": proxy, "https": proxy},
+                    stream=stream,
+                    timeout=timeout,
                 )
-                length = int(response.headers["content-length"])
-                got = 0
-                for data in response.iter_content(1024):
-                    got += len(data)
-                    done = int((got / length) * 20)
-                    bar = f"[*{'=' * done}{' ' * (20 - done)}*]"
-                    speed = f"`{got / (time.perf_counter() - start) / 1024 ** 2:.2f}` MBps"
-                    status.set_message(f"Testing connection speed, {bar} {speed}")
-                if time.perf_counter() - start > 10:
-                    # Соединение медленнее 0.1 МБ/c
-                    status.fail("too slow")
-                    continue
-            except requests.exceptions.RequestException as e:
-                status.fail(str(e))
-                continue
+                for proxy in itertools.islice(proxies, size)
+            )
+            responses: Iterator[requests.Response] = grequests.imap(requests_, size=None)
+            for it in responses:
+                if it:
+                    self._netloc_proxies[netloc] = it.request.headers["proxy"]
+                    return it
 
-        return
+    def _proxies(self) -> Iterator[str]:
+        """
+        Бесконечный генератор, возвращающий адреса прокси-серверов
+        Адреса могут повторяться
+        """
+
+        while True:
+            try:
+                response = requests.get("https://www.sslproxies.org").text
+                yield from re.findall(r"\d+\.\d+\.\d+\.\d+:\d+", response)
+            except requests.RequestException:
+                pass
+
+
+proxied_requests = ProxiedRequests()
 
 
 #
@@ -869,11 +893,7 @@ class BandcampDatabase:
         try:
             return requests.get(url, params=params)
         except requests.exceptions.SSLError:
-            while True:
-                try:
-                    return requests.get(url, params=params, proxies={"https": proxy()})
-                except requests.exceptions.RequestException:
-                    next_proxy()
+            return proxied_requests.get(url, params=params, timeout=10)
 
     def search_track(self, query: str) -> Optional["BandcampDatabaseTrack"]:
         response = BandcampDatabase.get("https://bandcamp.com/search", params={"q": query, "item_type": "t"})
@@ -941,11 +961,7 @@ class BandcampDatabaseTrack:
         cover_url = popup_image["href"]
         assert isinstance(cover_url, str)
 
-        while True:
-            try:
-                return requests.get(cover_url, proxies={"https": proxy()}).content
-            except requests.exceptions.RequestException:
-                next_proxy()
+        return proxied_requests.get(cover_url, timeout=10).content
 
 
 class GeniusDatabase:
