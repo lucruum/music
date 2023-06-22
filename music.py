@@ -1126,8 +1126,12 @@ class YouTubeMusicDatabase:
         self._impl.context["context"]["client"]["hl"] = "ru"
 
     def search_track(self, query: str) -> Optional["YouTubeMusicDatabaseTrack"]:
-        if found := self._impl.search(query, filter="songs", limit=1):
-            return YouTubeMusicDatabaseTrack(self, found[0])
+        try:
+            if found := self._impl.search(query, filter="songs", limit=1):
+                return YouTubeMusicDatabaseTrack(self, found[0])
+        # Сервер выбросил исключение >= 400
+        except Exception:
+            pass
         return None
 
 
