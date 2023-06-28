@@ -1307,10 +1307,10 @@ class _VKontakteUserTracks:
         for it in unavailable_only_tracks:
             track = VKontakteTrack(
                 {
-                    "artist": it[4],
+                    "artist": html.unescape(it[4]),
                     "id": it[0],
                     "owner_id": it[1],
-                    "title": it[3],
+                    "title": html.unescape(it[3]),
                     "track_covers": [],
                     "url": "",
                 }
