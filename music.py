@@ -84,6 +84,23 @@ def patch_pytube() -> None:
 """,
     )
 
+    # См. https://github.com/pytube/pytube/issues/1684
+    monkey_patch(
+        pytube.cipher.get_throttling_function_name,
+        "a62f87be5d8d7aab919435d0b9c145c740fcf0c51e2f8183f1b19677",
+        r"""\
+@@ -15,7 +15,7 @@
+         # a.C && (b = a.get("n")) && (b = Bpa[0](b), a.set("n", b),
+         # Bpa.length || iha("")) }};
+         # In the above case, `iha` is the relevant function name
+-        r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&\s*'
++        r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&.*?\|\|\s*([a-z]+)',
+         r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])?\([a-z]\)',
+     ]
+     logger.debug('Finding throttling function name')
+""",
+    )
+
 
 def patch_tqdm() -> None:
     """
