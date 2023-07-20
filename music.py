@@ -101,6 +101,30 @@ def patch_pytube() -> None:
 """,
     )
 
+    # См. https://github.com/pytube/pytube/issues/1728
+    # Патч: https://github.com/pytube/pytube/issues/1728#issuecomment-1641396749
+    monkey_patch(
+        pytube.cipher.get_transform_object,
+        "9f0ab7cc1f39c46408f555f6015c09cc98843f8b8aad8c13b3827da1",
+        r'''\
+@@ -1,3 +1,6 @@
++from typing import List
++
++
+ def get_transform_object(js: str, var: str) -> List[str]:
+     """Extract the "transform object".
+
+@@ -25,6 +28,6 @@
+     regex = re.compile(pattern, flags=re.DOTALL)
+     transform_match = regex.search(js)
+     if not transform_match:
+-        raise RegexMatchError(caller="get_transform_object", pattern=pattern)
++        return []  # Return an empty list if no match is found
+
+     return transform_match.group(1).replace("\n", " ").split(", ")
+''',
+    )
+
 
 def patch_tqdm() -> None:
     """
