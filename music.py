@@ -2,12 +2,13 @@ from types import NoneType, TracebackType
 from typing import (
     Any,
     Callable,
-    cast,
     Iterator,
+    Literal,
     Optional,
     Sequence,
     Type,
     TypeVar,
+    cast,
 )
 
 import abc
@@ -34,12 +35,6 @@ import urllib.parse
 import uuid
 import warnings
 
-if sys.platform == "win32":
-    import msvcrt
-else:
-    import termios
-    import tty
-
 # grequests следует импортировать перед requests: https://github.com/spyoungtech/grequests/issues/103
 import grequests  # type: ignore[import]
 
@@ -59,6 +54,46 @@ import vk_api  # type: ignore[import]
 import vk_api.audio  # type: ignore[import]
 import yandex_music
 import ytmusicapi  # type: ignore[import]
+
+
+# mypy понимает условия, содержащие `sys.platform`, что позволяет писать платформоспецифичный код,
+# но теряется, как только проверки ОС помещаются в переменную:
+#
+#   OS_WINDOWS = sys.platform == "win32"
+#   reveal_type(OS_WINDOWS)     ■ Revealed type is "builtins.bool"
+#   if OS_WINDOWS:
+#       import msvcrt
+#       return msvcrt.getch().decode()      ■ Module has no attribute "getch"
+#
+# (см. https://mypy.readthedocs.io/en/stable/common_issues.html#python-version-and-system-platform-checks)
+#
+# К счастью, использование переменных с литеральным типом решает эту проблему
+if sys.platform == "linux":
+    OS_WINDOWS: Literal[False] = False
+    OS_LINUX: Literal[True] = True
+elif sys.platform == "win32":
+    OS_WINDOWS: Literal[True] = True
+    OS_LINUX: Literal[False] = False
+# `OS_ANDROID` имеет нелитеральный тип `builtins.bool`
+OS_ANDROID = hasattr(sys, "getandroidapilevel")
+
+
+if OS_WINDOWS:
+    import msvcrt
+else:
+    import termios
+    import tty
+
+
+#
+# Конфигурация
+#
+
+
+def ensure_ffmpeg_installed() -> None:
+    process = subprocess.run("ffmpeg -version", capture_output=True, shell=True, text=True)
+    if process.returncode == 127:
+        exit("ffmpeg: requirement is not satisfied")
 
 
 #
@@ -498,7 +533,7 @@ def read_password(prompt: str = "") -> str:
 def read_char_unbuffered() -> str:
     """Получает символ из консоли без отображения (`getch`)"""
     # См. https://stackoverflow.com/a/510364
-    if sys.platform == "win32":
+    if OS_WINDOWS:
         return msvcrt.getch().decode()
     else:
         fd = sys.stdin.fileno()
@@ -602,11 +637,14 @@ def ffmpeg_with_progress_bar(
 #
 
 
-MUSIC_FOLDER = (
-    pathlib.Path(os.environ["USERPROFILE"], "Music")
-    if sys.platform == "win32"
-    else pathlib.Path("/storage/emulated/0/Music")
-)
+if OS_ANDROID:
+    MUSIC_FOLDER = pathlib.Path("/storage/emulated/0/Music")
+elif OS_LINUX:
+    MUSIC_FOLDER = pathlib.Path.home() / "Downloads" / "Music"
+elif OS_WINDOWS:
+    MUSIC_FOLDER = pathlib.Path(os.environ["USERPROFILE"], "Music")
+else:
+    assert False, "Unknown platform"
 
 
 def remove_invalid_path_chars(s: str) -> str:
@@ -1230,7 +1268,7 @@ class VKontakteClient:
                         x.get_url(),
                         # Windows Terminal отображает \u200b (пробел нулевой ширины) пустой ячейкой
                         # (https://github.com/microsoft/terminal/issues/8667)
-                        "\u200b" if sys.platform != "win32" else "",
+                        "\u200b" if OS_ANDROID else "",
                     )
                 )
             ),
@@ -1896,6 +1934,7 @@ if __name__ == "__main__":
     import pdb
 
     try:
+        ensure_ffmpeg_installed()
         patch_pytube()
         patch_tqdm()
         patch_vk_api()
