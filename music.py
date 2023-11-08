@@ -163,6 +163,24 @@ def patch_pytube() -> None:
 ''',
     )
 
+    # См. https://github.com/pytube/pytube/pull/1813:
+    # видео без возрастных ограничений выдаёт ошибку возрастного ограничения
+    monkey_patch(
+        pytube.YouTube.bypass_age_gate,
+        "684c153ddddd80452936a355e39e5b7ce5af008149fd9650865f315a",
+        r'''\
+@@ -1,7 +1,7 @@
+ def bypass_age_gate(self):
+     """Attempt to update the vid_info by bypassing the age gate."""
+     innertube = InnerTube(
+-        client='ANDROID_EMBED',
++        client='ANDROID',
+         use_oauth=self.use_oauth,
+         allow_cache=self.allow_oauth_cache
+     )
+''',
+    )
+
 
 def patch_tqdm() -> None:
     """
