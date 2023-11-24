@@ -523,48 +523,46 @@ class Status:
 
 def read_password(prompt: str = "") -> str:
     """Ввод пароля с заменой выводимых символов на звёздочки"""
-    # См. https://github.com/asweigart/pwinput/blob/9336b861fca3de3fe82a7ced6e80c2fdb0c53abb/src/pwinput/__init__.py#L48
-    result = ""
+
     write(prompt, flush=True, end="")
-    while True:
-        code = ord(read_char_unbuffered())
-        # ETX (end of text: код "03" используется для отправки процессу сигнала "SIGINT")
-        if code == 3:
-            raise KeyboardInterrupt()
-        # BS (backspace) и FF (form feed)
-        elif code in (8, 127):
-            if result:
-                sys.stdout.write("\b \b")
-                sys.stdout.flush()
-                result = result[:-1]
-        # LF (line feed)
-        elif code == 13:
-            sys.stdout.write("\n")
-            return "".join(result)
-        # Непечатаемые символы
-        elif 0 <= code <= 31:
-            pass
-        else:
-            sys.stdout.write("*")
-            sys.stdout.flush()
-            result += chr(code)
-    return result
 
-
-def read_char_unbuffered() -> str:
-    """Получает символ из консоли без отображения (`getch`)"""
-    # См. https://stackoverflow.com/a/510364
-    if OS_WINDOWS:
-        return msvcrt.getch().decode()
-    else:
+    if not OS_WINDOWS:
         fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
+        old_attrs = termios.tcgetattr(fd)
+        tty.setraw(fd)
+
+    result = ""
+    try:
+        while True:
+            if OS_WINDOWS:
+                code = msvcrt.getch()
+            else:
+                code = ord(sys.stdin.read(1))
+
+            # ETX (end of text: код "03" используется для отправки процессу сигнала "SIGINT")
+            if code == 3:
+                raise KeyboardInterrupt()
+            # BS (backspace) и FF (form feed)
+            elif code in (8, 127):
+                if result:
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                    result = result[:-1]
+            # LF (line feed)
+            elif code == 13:
+                break
+            # Непечатаемые символы
+            elif 0 <= code <= 31:
+                pass
+            else:
+                sys.stdout.write("*")
+                sys.stdout.flush()
+                result += chr(code)
+    finally:
+        if not OS_WINDOWS:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write("\n")
+    return "".join(result)
 
 
 def ffmpeg_with_progress_bar(
