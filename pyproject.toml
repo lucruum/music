@@ -44,6 +44,8 @@ types-psutil = "^5.9.5.16"
 
 [tool.pyright]
 pythonVersion = "3.11"
+venv = ".venv"
+venvPath = "."
 
 [build-system]
 requires = ["poetry-core"]
