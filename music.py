@@ -68,10 +68,16 @@ import ytmusicapi  # type: ignore[import]
 # (см. https://mypy.readthedocs.io/en/stable/common_issues.html#python-version-and-system-platform-checks)
 #
 # К счастью, использование переменных с литеральным типом решает эту проблему
-if sys.platform == "linux":
+if sys.platform == "darwin":
+    OS_DARWIN: Literal[True] = True
+    OS_WINDOWS: Literal[False] = False
+    OS_LINUX: Literal[False] = False
+elif sys.platform == "linux":
+    OS_DARWIN: Literal[False] = False
     OS_WINDOWS: Literal[False] = False
     OS_LINUX: Literal[True] = True
 elif sys.platform == "win32":
+    OS_DARWIN: Literal[False] = False
     OS_WINDOWS: Literal[True] = True
     OS_LINUX: Literal[False] = False
 # `OS_ANDROID` имеет нелитеральный тип `builtins.bool`
@@ -658,6 +664,8 @@ def ffmpeg_with_progress_bar(
 
 if OS_ANDROID:
     MUSIC_FOLDER = pathlib.Path("/storage/emulated/0/Music")
+elif OS_DARWIN:
+    MUSIC_FOLDER = pathlib.Path(f"/Users/{os.getlogin()}/Music")
 elif OS_LINUX:
     MUSIC_FOLDER = pathlib.Path.home() / "Downloads" / "Music"
 elif OS_WINDOWS:

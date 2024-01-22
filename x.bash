@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-YANDEX_MUSIC_PY_TYPED_PATH=".venv/lib/python3.11/site-packages/yandex_music/py.typed"
+YANDEX_MUSIC_PY_TYPED_PATH="$(poetry env info --path)/lib/python3.11/site-packages/yandex_music/py.typed"
 
 # Сообщаем mypy, что библиотека содержит описания типов
 if [[ ! -f $YANDEX_MUSIC_PY_TYPED_PATH ]]; then
