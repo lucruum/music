@@ -1952,20 +1952,19 @@ def main() -> None:
 
         sync(videos, MUSIC_FOLDER / "YouTube", database)
 
-    vkontakte_routine()
-    yandex_music_routine()
-    youtube_routine()
+    for routine in (vkontakte_routine, yandex_music_routine, youtube_routine):
+        try:
+            routine()
+        except Exception:
+            print(traceback.format_exc())
+            pdb.post_mortem()
 
 
 if __name__ == "__main__":
     import pdb
 
-    try:
-        ensure_ffmpeg_installed()
-        patch_pytube()
-        patch_tqdm()
-        patch_vk_api()
-        main()
-    except Exception:
-        print(traceback.format_exc())
-        pdb.post_mortem()
+    ensure_ffmpeg_installed()
+    patch_pytube()
+    patch_tqdm()
+    patch_vk_api()
+    main()
