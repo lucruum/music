@@ -33,7 +33,6 @@ import textwrap
 import traceback
 import urllib.parse
 import uuid
-import warnings
 
 try:
     # grequests следует импортировать перед requests: https://github.com/spyoungtech/grequests/issues/103
@@ -1299,10 +1298,9 @@ def remove_lyrics_section_headers(s: str) -> str:
 
 
 class VKontakteClient:
-    def __init__(self, login: str, password: str, cache: AutovivificiousDict):
+    def __init__(self, token: str, cache: AutovivificiousDict):
         session = vk_api.VkApi(
-            login,
-            password,
+            token=token,
             captcha_handler=lambda x: x.try_again(
                 input(
                     # Гиперссылки в Termux включают в себя завершающее двоеточие,
@@ -1316,13 +1314,13 @@ class VKontakteClient:
                 )
             ),
         )
-        session.auth()
 
         info = session.get_api().users.get(user_ids=None)[0]
 
         self._api = session.get_api()
         self._audio = vk_api.audio.VkAudio(session)
         self._cache = cache
+        self._token = token
         self.id = str(info["id"])
 
     def group(self, id_: str | int) -> "VKontakteGroup":
@@ -1334,21 +1332,23 @@ class VKontakteClient:
 
 def make_vkontakte_client(config: AutovivificiousDict, cache: AutovivificiousDict) -> VKontakteClient:
     """Создание клиента с ранее введёнными учётными данными"""
-    if "credentials" in config["vkontakte"]:
-        login, password = config["vkontakte"]["credentials"]
-    else:
-        login = input("VKontakte login: ")
-        password = read_password(f"{login.split('@')[0]}'s password: ")
+
+    token = None
+    if "kate_mobile_token" in config["vkontakte"]:
+        token = config["vkontakte"]["kate_mobile_token"]
 
     while True:
+        if token is None:
+            token = read_password("Kate Mobile Access Token: ")
+
         with Status("Logging in to VKontakte") as status:
-            config["vkontakte"]["credentials"] = (login, password)
             try:
-                return VKontakteClient(login, password, cache)
-            except (vk_api.exceptions.BadPassword, vk_api.exceptions.LoginRequired, vk_api.exceptions.PasswordRequired):
-                status.fail("invalid login or password")
-                login = input("VKontakte login: ")
-                password = read_password(f"{login.split('@')[0]}'s password: ")
+                return VKontakteClient(token, cache)
+            except vk_api.exceptions.ApiError:
+                status.fail("invalid access token")
+            finally:
+                config["vkontakte"]["kate_mobile_token"] = token
+                token = None
 
 
 class VKontakteGroup(Show):
@@ -1380,111 +1380,35 @@ class VKontakteUser(Show):
 
     @property
     def tracks(self) -> list["VKontakteTrack"]:
-        return list(_VKontakteUserTracks(self))
+        # Заголовки и параметры взяты отсюда: https://github.com/issamansur/vkpymusic
+
+        kate_mobile_user_agent = (
+            "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
+        )
+
+        response = requests.post(
+            "https://api.vk.com/method/audio.get",
+            headers={
+                "User-Agent": kate_mobile_user_agent,
+                "Accept-Encoding": "gzip, deflate",
+                "Accept": "*/*",
+                "Connection": "keep-alive",
+            },
+            data=[
+                ("access_token", self._client._token),
+                ("extended", 1),
+                ("https", 1),
+                ("lang", "ru"),
+                ("owner_id", self.id),
+                ("v", "5.131"),
+            ],
+        ).json()
+
+        return [VKontakteTrack(it) for it in response["response"]["items"]]
 
     @property
     def wall(self) -> "VKontakteWall":
         return VKontakteWall(self._client, self.id)
-
-
-class _VKontakteUserTracks:
-    def __init__(self, user: VKontakteUser):
-        self._user = user
-
-    def __iter__(self) -> Iterator["VKontakteTrack"]:
-        all_tracks, available_only_tracks, unavailable_only_tracks = self._tracks()
-
-        missing_hashes = []
-        for it in available_only_tracks:
-            id_ = f"{it[1]}{it[0]}"
-            if id_ not in self._user._client._cache["user_tracks"][self._user.id]:
-                hashes = it[13].split("/")
-                full_id = (str(it[1]), str(it[0]), hashes[2], hashes[5])
-                missing_hashes.append(full_id)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=bs4.MarkupResemblesLocatorWarning)
-
-            with tqdm.tqdm(
-                ascii=".:",
-                desc="Fetching tracks",
-                disable=len(missing_hashes) == 0,
-                initial=len(all_tracks) - len(unavailable_only_tracks) - len(missing_hashes),
-                total=len(all_tracks),
-            ) as bar:
-                for wrappee in vk_api.audio.scrap_tracks(
-                    missing_hashes,
-                    int(self._user._client.id),
-                    self._user._client._audio._vk.http,
-                    convert_m3u8_links=self._user._client._audio.convert_m3u8_links,
-                ):
-                    track = VKontakteTrack(wrappee)
-                    self._user._client._cache["user_tracks"][self._user.id][track.id] = track
-                    bar.update()
-                # Индикатор выполнения может не до конца заполниться из-за наличия недоступных треков
-                if bar.n != len(all_tracks):
-                    bar.ascii = (f"{colorama.Fore.LIGHTRED_EX}:{colorama.Style.RESET_ALL}", ":")
-                    bar.refresh()
-
-        for it in unavailable_only_tracks:
-            track = VKontakteTrack(
-                {
-                    "artist": html.unescape(it[4]),
-                    "id": it[0],
-                    "owner_id": it[1],
-                    "title": html.unescape(it[3]),
-                    "track_covers": [],
-                    "url": "",
-                }
-            )
-            self._user._client._cache["user_tracks"][self._user.id][track.id] = track
-
-        for it in all_tracks:
-            id_ = f"{it[1]}{it[0]}"
-            yield self._user._client._cache["user_tracks"][self._user.id][id_]
-
-    def _tracks(self) -> tuple[list[Any], list[Any], list[Any]]:
-        all_tracks = []
-        available_only_tracks = []
-        unavailable_only_tracks = []
-
-        # См. vk_api/audio.py:VkAudio.get_iter
-        offset = 0
-        while True:
-            response = self._user._client._audio._vk.http.post(
-                "https://m.vk.com/audio",
-                data={
-                    "act": "load_section",
-                    "owner_id": self._user.id,
-                    "playlist_id": -1,
-                    "offset": offset,
-                    "type": "playlist",
-                    "access_hash": None,
-                    "is_loading_all": 1,
-                },
-                allow_redirects=False,
-            ).json()
-
-            if not response["data"][0]:
-                return [], [], []
-
-            # См. vk_api/audio.py:VkAudio.scrap_ids: `scrap_ids` пропускает недоступные треки,
-            # поэтому мы его не используем
-            for it in response["data"][0]["list"]:
-                hashes = it[13].split("/")
-                full_id = (str(it[1]), str(it[0]), hashes[2], hashes[5])
-                all_tracks.append(it)
-                if all(full_id):
-                    available_only_tracks.append(it)
-                else:
-                    unavailable_only_tracks.append(it)
-
-            if response["data"][0]["hasMore"]:
-                offset += vk_api.audio.TRACKS_PER_USER_PAGE
-            else:
-                break
-
-        return all_tracks, available_only_tracks, unavailable_only_tracks
 
 
 class VKontakteWall:
@@ -1544,21 +1468,15 @@ class VKontaktePost(Show):
 
 class VKontakteTrack(Show):
     def __init__(self, impl: dict[str, Any]):
-        # Обложки отсортированы по возрастанию расширения
-        self._cover_url = impl["track_covers"] and str(impl["track_covers"][-1]) or None
         self._url = impl["url"]
         self.artists = impl["artist"]
         self.id = f"{impl['owner_id']}{impl['id']}"
+        # API-метод 'audio.get' не возвращает ссылки на обложки
+        self.cover = b""
         self.title = impl["title"]
 
     def show(self) -> str:
         return f"{self.artists} - {self.title}"
-
-    @property
-    def cover(self) -> bytes:
-        if self._cover_url:
-            return requests.get(self._cover_url).content
-        return b""
 
     def saturated_metadata(self, suggestion: DatabaseTrack) -> "TrackMetadata":
         return TrackMetadata(
@@ -1575,11 +1493,22 @@ class VKontakteTrack(Show):
     def download(self, path: pathlib.Path) -> None:
         if not self._url:
             raise TrackNotAvailable("not available")
-        ffmpeg_with_progress_bar(
-            ffmpeg_args=["-http_persistent", "false", "-i", self._url, "-codec", "copy", str(path)],
-            tqdm_ascii=".:",
-            tqdm_desc="Receiving track",
-        )
+
+        response = requests.get(self._url, stream=True)
+        total = int(response.headers.get("content-length", 0))
+
+        with tqdm.tqdm(
+            ascii=".:",
+            desc="Receiving track",
+            total=total,
+            unit="B",
+            unit_divisor=1024,
+            unit_scale=True,
+        ) as bar:
+            with path.open("wb") as file:
+                for data in response.iter_content(1024):
+                    bar.update(len(data))
+                    file.write(data)
 
 
 class VKontakteAttachedTrack(VKontakteTrack):
