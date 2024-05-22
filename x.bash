@@ -9,7 +9,6 @@ fi
 
 poetry run python tools/watch.py music.py "
     clear;
-    poetry run black music.py;
     poetry run flake8 music.py;
     poetry run mypy music.py;
     poetry run python -m doctest music.py;
