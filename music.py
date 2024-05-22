@@ -202,6 +202,24 @@ def patch_pytube() -> None:
 ''',
     )
 
+    # См. https://github.com/pytube/pytube/issues/1498
+    # Патч: https://github.com/pytube/pytube/issues/1498#issuecomment-1472963944
+    monkey_patch(
+        pytube.cipher.get_throttling_plan,
+        "70a82c962abbbe471affc45ed36b591bfc6707a1d21821d9ac2c42c1",
+        r'''\
+@@ -17,7 +17,7 @@
+     plan_regex = re.compile(transform_start)
+     match = plan_regex.search(raw_code)
+
+-    transform_plan_raw = find_object_from_startpoint(raw_code, match.span()[1] - 1)
++    transform_plan_raw = js
+
+     # Steps are either c[x](c[y]) or c[x](c[y],c[z])
+     step_start = r"c\[(\d+)\]\(c\[(\d+)\](,c(\[(\d+)\]))?\)"
+''',
+    )
+
 
 def patch_tqdm() -> None:
     """
