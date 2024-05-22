@@ -35,8 +35,24 @@ import urllib.parse
 import uuid
 import warnings
 
-# grequests следует импортировать перед requests: https://github.com/spyoungtech/grequests/issues/103
-import grequests  # type: ignore[import]
+try:
+    # grequests следует импортировать перед requests: https://github.com/spyoungtech/grequests/issues/103
+    import grequests
+except RuntimeError:
+    # Poetry, установленный nix'ом, не может найти libstdc++:
+    # $ nix-env -iA nixpkgs.poetry
+    # $ poetry install
+    # $ poetry run python3 music.py
+    # ...
+    #     from ._greenlet import _C_API # pylint:disable=no-name-in-module
+    #     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    # ImportError: libstdc++.so.6: cannot open shared object file: No such file or directory
+
+    import ctypes
+
+    ctypes.cdll.LoadLibrary("libstdc++.so.6")
+
+    import grequests  # type: ignore[import]
 
 import bs4
 import colorama
