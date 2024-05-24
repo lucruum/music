@@ -1775,6 +1775,8 @@ class YouTubeVideo(Show):
 
     def download(self, path: pathlib.Path) -> None:
         try:
+            convert_to_mp3 = False
+
             with tqdm.tqdm(
                 ascii=".:",
                 desc="Receiving track",
@@ -1788,23 +1790,28 @@ class YouTubeVideo(Show):
                     bar.n = min(bar.n + len(chunk), bar.total)
                     bar.refresh()
 
-                impl = (
-                    pytube.YouTube(url=self.url, on_progress_callback=on_progress_callback, use_oauth=True)
-                    .streams.filter(mime_type="audio/mp4")
-                    .order_by("abr")
-                    .last()
-                )
+                streams = pytube.YouTube(
+                    url=self.url,
+                    on_progress_callback=on_progress_callback,
+                    use_oauth=True
+                ).streams
+
+                impl = streams.filter(mime_type="audio/webm").order_by("abr").last()
+                if impl is None:
+                    impl = streams.filter(mime_type="audio/mp4").order_by("abr").last()
+                    convert_to_mp3 = True
                 bar.total = impl.filesize
                 bar.refresh()
                 impl.download(output_path=path.parent, filename=path.name)
 
-            converted = path.with_name(f"{path.name}-mp3")
-            ffmpeg_with_progress_bar(
-                ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
-                tqdm_ascii=".:",
-                tqdm_desc="Converting track format",
-            )
-            path.write_bytes(converted.read_bytes())
+            if convert_to_mp3:
+                converted = path.with_name(f"{path.name}-mp3")
+                ffmpeg_with_progress_bar(
+                    ffmpeg_args=["-f", "mp4", "-i", str(path), "-f", "mp3", str(converted)],
+                    tqdm_ascii=".:",
+                    tqdm_desc="Converting track format",
+                )
+                path.write_bytes(converted.read_bytes())
         except pytube.exceptions.AgeRestrictedError as e:
             # Заменяем идентификатор видео на "this video"
             cause = "this video " + " ".join(str(e).split()[1:])
