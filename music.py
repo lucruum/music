@@ -57,6 +57,7 @@ import bs4
 import colorama
 import ffpb  # type: ignore[import]
 import mutagen.id3
+import mutagen.mp3
 import pytube  # type: ignore[import]
 import pytube.exceptions  # type: ignore[import]
 import pytube.extract  # type: ignore[import]
@@ -1863,11 +1864,13 @@ def sync(
     def remove_extraneous_tracks() -> None:
         for id_, path in uploaded_tracks.items():
             if id_ not in track_ids:
-                tags = mutagen.File(path)  # type: ignore[attr-defined]
-                artists = tags["TPE1"]
-                title = tags["TIT2"]
-
-                write(f"Removing `{artists} - {title}`")
+                try:
+                    tags = mutagen.File(path)  # type: ignore[attr-defined]
+                    artists = tags["TPE1"]
+                    title = tags["TIT2"]
+                    write(f"Removing `{artists} - {title}`")
+                except mutagen.mp3.HeaderNotFoundError:
+                    write(f"Broken file `{path}`, removing")
                 path.unlink()
 
     def arrange_files() -> None:
