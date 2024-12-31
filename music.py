@@ -1928,7 +1928,9 @@ def main() -> None:
 
     def youtube_routine() -> None:
         client = make_youtube_client(config)
-        user = client.user("/@user-vl2go8hx7e")
+        me = "АветисСехпосян"
+        me = urllib.parse.quote(me)
+        user = client.user(f"/@{me}")
         playlist = user.playlists[-1]
         videos = playlist.videos
 
