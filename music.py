@@ -1714,6 +1714,8 @@ class YouTubeVideo(Show):
             raise TrackNotAvailable(cause) from e
         except pytubefix.exceptions.VideoPrivate as e:
             raise TrackNotAvailable("this video is private") from e
+        except pytubefix.exceptions.VideoUnavailable as e:
+            raise TrackNotAvailable("this video is unavailable") from e
 
 
 #
