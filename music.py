@@ -1050,6 +1050,9 @@ class GeniusDatabase:
         query = GeniusDatabase._optimized_query(query)
 
         response = requests.get("https://genius.com/api/search/song", params={"q": query})
+        if not response:
+            return None
+
         for it in response.json()["response"]["sections"][0]["hits"]:
             if it["result"]["artist_names"] not in GeniusDatabase.TRANSLATION_ARTIST_NAMES:
                 return GeniusDatabaseTrack(it["result"])
