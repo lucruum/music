@@ -58,10 +58,10 @@ import colorama
 import ffpb  # type: ignore[import]
 import mutagen.id3
 import mutagen.mp3
-import pytube  # type: ignore[import]
-import pytube.exceptions  # type: ignore[import]
-import pytube.extract  # type: ignore[import]
-import pytube.request  # type: ignore[import]
+import pytubefix  # type: ignore[import]
+import pytubefix.exceptions  # type: ignore[import]
+import pytubefix.extract  # type: ignore[import]
+import pytubefix.request  # type: ignore[import]
 import pyyoutube  # type: ignore[import]
 import requests
 import tqdm
@@ -121,114 +121,6 @@ def ensure_ffmpeg_installed() -> None:
 #
 # Патчи
 #
-
-
-def patch_pytube() -> None:
-    # См. https://github.com/pytube/pytube/issues/1326: `pytube.YouTube.streams` падает с ошибкой
-    # "pytube.exceptions.RegexMatchError: __init__: could not find match for ^\w+\W"
-    monkey_patch(
-        pytube.cipher.Cipher.__init__,
-        "707c7d6b7c06938f16a8cff7ecc707b235245f1db0f0d3eb8d1e2002",
-        r"""\
-@@ -1,6 +1,6 @@
- def __init__(self, js: str):
-     self.transform_plan: List[str] = get_transform_plan(js)
--    var_regex = re.compile(r"^\w+\W")
-+    var_regex = re.compile(r"^\$*\w+\W")
-     var_match = var_regex.search(self.transform_plan[0])
-     if not var_match:
-         raise RegexMatchError(
-""",
-    )
-
-    # См. https://github.com/pytube/pytube/issues/1684,
-    #     https://github.com/pytube/pytube/issues/1707#issuecomment-1672149709
-    monkey_patch(
-        pytube.cipher.get_throttling_function_name,
-        "a62f87be5d8d7aab919435d0b9c145c740fcf0c51e2f8183f1b19677",
-        r"""\
-@@ -15,8 +15,8 @@
-         # a.C && (b = a.get("n")) && (b = Bpa[0](b), a.set("n", b),
-         # Bpa.length || iha("")) }};
-         # In the above case, `iha` is the relevant function name
--        r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&\s*'
--        r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])?\([a-z]\)',
-+        r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&.*?\|\|\s*([a-z]+)',
-+        r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])\([a-z]\)',
-     ]
-     logger.debug('Finding throttling function name')
-     for pattern in function_patterns:
-""",
-    )
-
-    # См. https://github.com/pytube/pytube/issues/1728
-    # Патч: https://github.com/pytube/pytube/issues/1728#issuecomment-1641396749
-    monkey_patch(
-        pytube.cipher.get_transform_object,
-        "9f0ab7cc1f39c46408f555f6015c09cc98843f8b8aad8c13b3827da1",
-        r'''\
-@@ -1,3 +1,6 @@
-+from typing import List
-+
-+
- def get_transform_object(js: str, var: str) -> List[str]:
-     """Extract the "transform object".
-
-@@ -25,6 +28,6 @@
-     regex = re.compile(pattern, flags=re.DOTALL)
-     transform_match = regex.search(js)
-     if not transform_match:
--        raise RegexMatchError(caller="get_transform_object", pattern=pattern)
-+        return []  # Return an empty list if no match is found
-
-     return transform_match.group(1).replace("\n", " ").split(", ")
-''',
-    )
-
-    # См. https://github.com/pytube/pytube/pull/1813:
-    # видео без возрастных ограничений выдаёт ошибку возрастного ограничения
-    monkey_patch(
-        pytube.YouTube.bypass_age_gate,
-        "684c153ddddd80452936a355e39e5b7ce5af008149fd9650865f315a",
-        r'''\
-@@ -1,7 +1,7 @@
- def bypass_age_gate(self):
-     """Attempt to update the vid_info by bypassing the age gate."""
-     innertube = InnerTube(
--        client='ANDROID_EMBED',
-+        client='ANDROID',
-         use_oauth=self.use_oauth,
-         allow_cache=self.allow_oauth_cache
-     )
-''',
-    )
-
-    # См. https://github.com/pytube/pytube/issues/1498
-    # Патч: https://github.com/pytube/pytube/issues/1498#issuecomment-1472963944
-    monkey_patch(
-        pytube.cipher.get_throttling_plan,
-        "70a82c962abbbe471affc45ed36b591bfc6707a1d21821d9ac2c42c1",
-        r'''\
-@@ -17,7 +17,7 @@
-     plan_regex = re.compile(transform_start)
-     match = plan_regex.search(raw_code)
-
--    transform_plan_raw = find_object_from_startpoint(raw_code, match.span()[1] - 1)
-+    transform_plan_raw = js
-
-     # Steps are either c[x](c[y]) or c[x](c[y],c[z])
-     step_start = r"c\[(\d+)\]\(c\[(\d+)\](,c(\[(\d+)\]))?\)"
-''',
-    )
-
-    # См. https://github.com/pytube/pytube/issues/1894
-    # Патч: https://github.com/pytube/pytube/issues/1894#issuecomment-1993377253
-    pytube.innertube._default_clients["ANDROID"]["context"]["client"]["clientVersion"] = "19.08.35"
-    pytube.innertube._default_clients["ANDROID_EMBED"]["context"]["client"]["clientVersion"] = "19.08.35"
-    pytube.innertube._default_clients["ANDROID_MUSIC"]["context"]["client"]["clientVersion"] = "6.40.52"
-    pytube.innertube._default_clients["IOS"]["context"]["client"]["clientVersion"] = "19.08.35"
-    pytube.innertube._default_clients["IOS_EMBED"]["context"]["client"]["clientVersion"] = "19.08.35"
-    pytube.innertube._default_clients["IOS_MUSIC"]["context"]["client"]["clientVersion"] = "6.41"
 
 
 def patch_tqdm() -> None:
@@ -1687,10 +1579,10 @@ class YandexMusicTrack(Show):
 #
 
 
-# `pytube.Stream.download` вызывает `on_progress` по загрузке каждых `default_range_size` байт:
+# `pytubefix.Stream.download` вызывает `on_progress` по загрузке каждых `default_range_size` байт:
 # со значением по умолчанию (9 МБ) индикатор загрузки трека мгновенно заполняется, не предоставляя
 # никакой информации о скорости загрузки трека
-pytube.request.default_range_size = 1024**2
+pytubefix.request.default_range_size = 1024**2
 
 
 class YouTubeClient:
@@ -1723,10 +1615,10 @@ def make_youtube_client(config: AutovivificiousDict) -> YouTubeClient:
 class YouTubeUser(Show):
     def __init__(self, client: YouTubeClient, id_: str):
         # `extract.channel_name` не умеет работать с новыми "@"-ссылками (https://github.com/pytube/pytube/issues/1443)
-        save = pytube.extract.channel_name
-        pytube.extract.channel_name = lambda x: x
-        channel = pytube.Channel(id_)
-        pytube.extract.channel_name = save
+        save = pytubefix.extract.channel_name
+        pytubefix.extract.channel_name = lambda x: x
+        channel = pytubefix.Channel(id_)
+        pytubefix.extract.channel_name = save
 
         self.client = client
         self.id: str = channel.channel_id
@@ -1787,11 +1679,11 @@ class YouTubeVideo(Show):
                 unit="B",
             ) as bar:
 
-                def on_progress_callback(stream: pytube.Stream, chunk: bytes, bytes_remaining: int) -> None:
+                def on_progress_callback(stream: pytubefix.Stream, chunk: bytes, bytes_remaining: int) -> None:
                     bar.n = min(bar.n + len(chunk), bar.total)
                     bar.refresh()
 
-                streams = pytube.YouTube(
+                streams = pytubefix.YouTube(
                     url=self.url,
                     on_progress_callback=on_progress_callback,
                     use_oauth=True
@@ -1813,11 +1705,11 @@ class YouTubeVideo(Show):
                     tqdm_desc="Converting track format",
                 )
                 path.write_bytes(converted.read_bytes())
-        except pytube.exceptions.AgeRestrictedError as e:
+        except pytubefix.exceptions.AgeRestrictedError as e:
             # Заменяем идентификатор видео на "this video"
             cause = "this video " + " ".join(str(e).split()[1:])
             raise TrackNotAvailable(cause) from e
-        except pytube.exceptions.VideoPrivate as e:
+        except pytubefix.exceptions.VideoPrivate as e:
             raise TrackNotAvailable("this video is private") from e
 
 
@@ -1948,7 +1840,6 @@ if __name__ == "__main__":
     import pdb
 
     ensure_ffmpeg_installed()
-    patch_pytube()
     patch_tqdm()
     patch_vk_api()
     main()
