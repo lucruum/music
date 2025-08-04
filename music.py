@@ -1162,14 +1162,22 @@ class GeniusDatabaseTrack:
 
 class YouTubeMusicDatabase:
     def __init__(self) -> None:
-        self._impl = ytmusicapi.YTMusic()
-        # Язык возвращаемых данных задаётся параметром `language` конструктора `YTMusic`,
-        # но в виду того, что библиотека не поддерживает русскую локализацию,
-        # выставляем язык хоста напрямую в заголовках
-        # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
-        self._impl.context["context"]["client"]["hl"] = "ru"
+        try:
+            self._impl = ytmusicapi.YTMusic()
+            # Язык возвращаемых данных задаётся параметром `language` конструктора `YTMusic`,
+            # но в виду того, что библиотека не поддерживает русскую локализацию,
+            # выставляем язык хоста напрямую в заголовках
+            # (см. https://github.com/sigma67/ytmusicapi/tree/master/ytmusicapi/locales#readme)
+            self._impl.context["context"]["client"]["hl"] = "ru"
+        # Заблокирован YouTube
+        except requests.ReadTimeout:
+            write("**Failed to access YouTube:** Read timeout")
+            self._impl = None
 
     def search_track(self, query: str) -> Optional["YouTubeMusicDatabaseTrack"]:
+        if self._impl is None:
+            return None
+
         try:
             if found := self._impl.search(query, filter="songs", limit=1):
                 return YouTubeMusicDatabaseTrack(self, found[0])
