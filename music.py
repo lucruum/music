@@ -24,12 +24,14 @@ import json
 import os
 import pathlib
 import pickle
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import traceback
 import urllib.parse
 import uuid
@@ -1796,9 +1798,18 @@ def sync(
             write(f"[*{n_downloaded + i + 1}*/*{n_downloaded + len(missing_tracks)}*] Downloading `{it}`")
             try:
                 with atomic_path(dest_folder / f"{index}_{id_}.mp3", suffix=".mp3") as tmp_path:
+                    q: queue.Queue[TrackMetadata] = queue.Queue()
+                    thread = threading.Thread(
+                        target=lambda: q.put(
+                            it.saturated_metadata(
+                                database.search_track(
+                                    str(it)))))
+                    thread.start()
                     it.download(tmp_path)
                     with Status("Embedding metadata"):
-                        it.saturated_metadata(database.search_track(str(it))).embed(tmp_path)
+                        thread.join()
+                    metadata = q.get()
+                    metadata.embed(tmp_path)
             except TrackNotAvailable as e:
                 write(f"**Failed to download:** {e}")
 
