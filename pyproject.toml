@@ -32,7 +32,7 @@ types-requests = "^2.31.0.0"
 types-tqdm = "^4.65.0.1"
 types-ujson = "^5.7.0.5"
 grequests = "^0.7.0"
-pytubefix = "^8.8.5"
+pytubefix = "10.3.6"
 
 
 [tool.poetry.group.dev.dependencies]
