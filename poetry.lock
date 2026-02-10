@@ -1362,13 +1362,13 @@ vkstreaming = ["websocket-client"]
 
 [[package]]
 name = "yandex-music"
-version = "2.1.1"
+version = "2.2.0"
 description = "Неофициальная Python библиотека для работы с API сервиса Яндекс.Музыка."
 optional = false
 python-versions = "~=3.7"
 groups = ["main"]
 files = [
-    {file = "yandex-music-2.1.1.tar.gz", hash = "sha256:57b7d48917992bf3696070b4f0b2f51d5e24c35c0af522f08c4e1e00c3e9d4f0"},
+    {file = "yandex-music-2.2.0.tar.gz", hash = "sha256:46beaacf8206de212323264c89e0bd4f4e2e626483dfa58f95e78cacd1a102cf"},
 ]
 
 [package.dependencies]
@@ -1552,4 +1552,4 @@ testing = ["coverage (>=5.0.3)", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "c08c5fae06d7b85d997e02a3b9ce933362c7e3893a1981fcdeea33e664d49543"
+content-hash = "6db5fc02110def2baa5488f169e3ae66ccbe68b14c9fbcf9e369c7e69b73bbcf"

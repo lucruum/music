@@ -1501,7 +1501,7 @@ class YandexMusicUser(Show):
         assert isinstance(info, dict)
 
         self._client = client
-        self.id: str = info["uid"]
+        self.id = id_
         self.name: str = info["name"]
 
     def show(self) -> str:
@@ -1839,9 +1839,7 @@ def main() -> None:
 
     def yandex_music_routine() -> None:
         client = make_yandex_music_client(config)
-        # Явно указываем пользователя на тот случай, когда отвалится токен,
-        # и придётся зайти из-под чужого аккаунта
-        user = client.user("lucruum666")
+        user = client.user()
         tracks = user.tracks
 
         (MUSIC_FOLDER / "Яндекс Музыка").mkdir(exist_ok=True, parents=True)
