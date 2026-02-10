@@ -1834,6 +1834,7 @@ def main() -> None:
         user = client.user()
         tracks = user.tracks
 
+        (MUSIC_FOLDER / "ВКонтакте").mkdir(exist_ok=True, parents=True)
         sync(tracks, MUSIC_FOLDER / "ВКонтакте", database)
 
     def yandex_music_routine() -> None:
@@ -1843,6 +1844,7 @@ def main() -> None:
         user = client.user("lucruum666")
         tracks = user.tracks
 
+        (MUSIC_FOLDER / "Яндекс Музыка").mkdir(exist_ok=True, parents=True)
         sync(tracks, MUSIC_FOLDER / "Яндекс Музыка", database)
 
     def youtube_routine() -> None:
@@ -1853,6 +1855,7 @@ def main() -> None:
         playlist = user.playlists[-1]
         videos = playlist.videos
 
+        (MUSIC_FOLDER / "YouTube").mkdir(exist_ok=True, parents=True)
         sync(videos, MUSIC_FOLDER / "YouTube", database)
 
     for routine in (vkontakte_routine, yandex_music_routine, youtube_routine):
